@@ -705,6 +705,8 @@ def realign_robot_to_waypoint_orientation(self, waypoint_name):
     command_client.robot_command(RobotCommandBuilder.stop_command())
     return False
 
+#TODO: try to use EXTENT local grid
+
 def easy_walk(options):
     robot, lease_client, robot_state_client, client_metadata = spotLogInUtils.setLogInfo(options)
 

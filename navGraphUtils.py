@@ -16,7 +16,10 @@ from bosdyn.client.math_helpers import Quat, SE3Pose
 
 class RecordingInterface(object):
     def __init__(self, robot, download_filepath, client_metadata):
+        # Store base path for creating unique download folders
+        self._base_download_filepath = download_filepath
         self._download_filepath = os.path.join(download_filepath, 'downloaded_graph')
+
         self._recording_client = robot.ensure_client(GraphNavRecordingServiceClient.default_service_name)
         self._recording_environment = GraphNavRecordingServiceClient.make_recording_environment(
             waypoint_env=GraphNavRecordingServiceClient.make_waypoint_environment(client_metadata=client_metadata)
@@ -33,6 +36,34 @@ class RecordingInterface(object):
 
         # Store waypoint poses: {waypoint_name: {'x': x, 'y': y, 'z': z, 'yaw': yaw}}
         self.waypoint_poses = {}
+
+    def _generate_unique_map_folder(self, base_name='downloaded_graph'):
+        """
+        Generate a unique folder name for map download.
+        If the folder already exists, append a number (e.g., downloaded_graph_1, downloaded_graph_2).
+
+        Args:
+            base_name: Base name for the folder (default: 'downloaded_graph')
+
+        Returns:
+            str: Full path to unique folder
+        """
+        from datetime import datetime
+
+        # Option 1: Use timestamp (recommended - always unique)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        unique_folder = f"{base_name}_{timestamp}"
+        full_path = os.path.join(self._base_download_filepath, unique_folder)
+
+        # If somehow it still exists (very unlikely), add a counter
+        counter = 1
+        original_path = full_path
+        while os.path.exists(full_path):
+            full_path = f"{original_path}_{counter}"
+            counter += 1
+
+        print(f"[MAP DOWNLOAD] New map will be saved to: {unique_folder}")
+        return full_path
 
     def initialize_with_fiducial(self, robot_state_client, fiducial_id=None):
         """
@@ -434,15 +465,91 @@ class RecordingInterface(object):
                 print(f'Failed to download waypoint snapshot: {waypoint.snapshot_id}')
                 continue
 
-    def download_full_graph(self, *args):
+    def download_full_graph_with_name(self, map_name):
+        """
+        Download the full graph and save to a folder with a custom name.
+        If a folder with the same name exists, appends a number (e.g., map_1, map_2).
+
+        Args:
+            map_name: Custom name for the map folder
+
+        Returns:
+            str: Path to the downloaded map folder, or None if download failed
+        """
         graph = self._graph_nav_client.download_graph()
         if graph is None:
-            print('Failed to download the graph.')
-            return
-        self._write_full_graph(graph)
-        print(f'Graph downloaded with {len(graph.waypoints)} waypoints and {len(graph.edges)} edges')
-        self._download_and_write_waypoint_snapshots(graph.waypoints)
-        self._download_and_write_edge_snapshots(graph.edges)
+            print('[MAP DOWNLOAD] ✗ Failed to download the graph.')
+            return None
+
+        # Generate unique folder with custom name
+        base_path = os.path.join(self._base_download_filepath, map_name)
+        unique_path = base_path
+
+        # If folder exists, append number
+        if os.path.exists(unique_path):
+            counter = 1
+            while os.path.exists(f"{base_path}_{counter}"):
+                counter += 1
+            unique_path = f"{base_path}_{counter}"
+            print(f"[MAP DOWNLOAD] Folder '{map_name}' exists, using '{os.path.basename(unique_path)}' instead")
+
+        # Temporarily change download path
+        old_path = self._download_filepath
+        self._download_filepath = unique_path
+
+        try:
+            print(f'\n[MAP DOWNLOAD] Starting download...')
+            print(f'[MAP DOWNLOAD] Destination: {os.path.basename(unique_path)}')
+
+            self._write_full_graph(graph)
+            print(f'[MAP DOWNLOAD] Graph downloaded with {len(graph.waypoints)} waypoints and {len(graph.edges)} edges')
+
+            self._download_and_write_waypoint_snapshots(graph.waypoints)
+            self._download_and_write_edge_snapshots(graph.edges)
+
+            print(f'[MAP DOWNLOAD] ✓ Map successfully saved to: {unique_path}')
+            return unique_path
+
+        finally:
+            # Restore original path
+            self._download_filepath = old_path
+
+    def download_full_graph(self, *args):
+        """
+        Download the full graph and save to a unique folder.
+        Each download creates a new folder with timestamp to avoid overwriting previous maps.
+
+        Returns:
+            str: Path to the downloaded map folder, or None if download failed
+        """
+        graph = self._graph_nav_client.download_graph()
+        if graph is None:
+            print('[MAP DOWNLOAD] ✗ Failed to download the graph.')
+            return None
+
+        # Generate unique folder for this download
+        unique_path = self._generate_unique_map_folder()
+
+        # Temporarily change download path
+        old_path = self._download_filepath
+        self._download_filepath = unique_path
+
+        try:
+            print(f'\n[MAP DOWNLOAD] Starting download...')
+            print(f'[MAP DOWNLOAD] Destination: {os.path.basename(unique_path)}')
+
+            self._write_full_graph(graph)
+            print(f'[MAP DOWNLOAD] Graph downloaded with {len(graph.waypoints)} waypoints and {len(graph.edges)} edges')
+
+            self._download_and_write_waypoint_snapshots(graph.waypoints)
+            self._download_and_write_edge_snapshots(graph.edges)
+
+            print(f'[MAP DOWNLOAD] ✓ Map successfully saved to: {unique_path}')
+            return unique_path
+
+        finally:
+            # Restore original path
+            self._download_filepath = old_path
 
     def _write_full_graph(self, graph):
         graph_bytes = graph.SerializeToString()
