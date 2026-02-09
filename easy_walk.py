@@ -825,19 +825,36 @@ def easy_walk(options):
 
                     print(f"\n[TARGET] Cella con rank più basso: ({target_row},{target_col}) rank={rank}")
 
-                    # NUOVO: Cerca waypoint più vicino usando distanza tra CELLE
-                    # invece che distanza euclidea tra coordinate
-                    waypoint = recordingInterface.find_nearest_waypoint_to_cell(target_row, target_col)
-                    if waypoint is not None:
+                    # Find nearest waypoint to target cell
+                    target_waypoint = recordingInterface.find_nearest_waypoint_to_cell(target_row, target_col)
+
+                    if target_waypoint is not None:
                         # Stop registrazione prima di navigare
                         recordingInterface.stop_recording()
-                        recordingInterface.download_full_graph()
+                        # Download lightweight graph (structure only, no snapshots) - faster and lighter
+                        recordingInterface.download_full_graph(include_snapshots=False)
 
-                        # Naviga al waypoint più vicino
-                        success = recordingInterface.navigate_to_waypoint(waypoint['id'], robot_state_client)
+                        # Get current position to find starting waypoint
+                        x_current, y_current, _, _ = spotUtils.getPosition(robot_state_client)
+                        current_waypoint = recordingInterface.find_nearest_waypoint_to_position(x_current, y_current)
+
+                        if current_waypoint:
+                            # Use shortest path navigation with automatic edge creation
+                            print(f"[PATHFINDING] Computing shortest path from {current_waypoint['name']} to {target_waypoint['name']}")
+                            success = recordingInterface.navigate_shortest_path(
+                                current_waypoint['name'],
+                                target_waypoint['name'],
+                                env,
+                                robot_state_client
+                            )
+                        else:
+                            # Fallback to direct navigation if current waypoint not found
+                            print(f"[PATHFINDING] Current waypoint not found, using direct navigation")
+                            success = recordingInterface.navigate_to_waypoint(target_waypoint['id'], robot_state_client)
+                            if success:
+                                recordingInterface.realign_robot_to_waypoint_orientation(target_waypoint['name'])
 
                         if success:
-                            recordingInterface.realign_robot_to_waypoint_orientation(waypoint['name'])
                             recordingInterface.start_recording()
 
                             # Prova a entrare nella cella target
@@ -878,9 +895,9 @@ def easy_walk(options):
                             else:
                                 # Failure - remove from frontier anyway
                                 frontier.remove((lowest_rank_cell[0], lowest_rank_cell[1], lowest_rank_cell[2]))
-                                print(f"[ERROR] Could not enter cell {lowest_rank_cell[0], lowest_rank_cell[1]} after navigating to waypoint {waypoint['name']}")
+                                print(f"[ERROR] Could not enter cell {lowest_rank_cell[0], lowest_rank_cell[1]} after navigating to waypoint {target_waypoint['name']}")
                         else:
-                            print(f"[ERROR] Could not navigate to waypoint {waypoint['name']} near cell {lowest_rank_cell[0], lowest_rank_cell[1]}")
+                            print(f"[ERROR] Could not navigate to waypoint {target_waypoint['name']} near cell {lowest_rank_cell[0], lowest_rank_cell[1]}")
                     else:
                         print(f"[ERROR] No waypoint found near cell {lowest_rank_cell[0], lowest_rank_cell[1]}")
 
@@ -914,7 +931,8 @@ def easy_walk(options):
         command_client.robot_command(RobotCommandBuilder.synchro_sit_command(), end_time_secs=time.time() + 20)
         sleep(1)
         robot.power_off(cut_immediately=False)
-        recordingInterface.download_full_graph()
+        # Download the complete map with snapshots at the end
+        recordingInterface.download_full_graph(include_snapshots=True)
         estop.stop()
 
 # FIXME Change hostname for Jetson/localhost
