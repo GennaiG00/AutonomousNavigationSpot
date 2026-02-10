@@ -1,4 +1,3 @@
-import math
 import os
 import time
 import numpy as np
@@ -17,7 +16,7 @@ from bosdyn.client.math_helpers import Quat, SE3Pose
 class RecordingInterface(object):
     def __init__(self, robot, download_filepath, client_metadata):
         # Store base path for creating unique download folders
-        self._base_download_filepath = download_filepath
+        self._base_download_filepath = download_filepath + "\GraphNavMaps"
         self._download_filepath = os.path.join(download_filepath, 'downloaded_graph')
 
         self._recording_client = robot.ensure_client(GraphNavRecordingServiceClient.default_service_name)
@@ -33,9 +32,104 @@ class RecordingInterface(object):
         self._current_edge_snapshots = dict()
         self._current_annotation_name_to_wp_id = dict()
         self.robot = robot
-
-        # Store waypoint poses: {waypoint_name: {'x': x, 'y': y, 'z': z, 'yaw': yaw}}
         self.waypoint_poses = {}
+
+    def load_manual_waypoints_from_graph(self):
+        """
+        Load all manual waypoints (wp_N format) from the current graph into waypoint_poses.
+        This should be called after uploading a graph or connecting to a robot with an existing graph.
+
+        Returns:
+            int: Number of manual waypoints loaded
+        """
+        print(f'\n[LOAD WAYPOINTS] Loading manual waypoints from graph...')
+
+        try:
+            graph = self._graph_nav_client.download_graph()
+            if not graph or len(graph.waypoints) == 0:
+                print(f'[LOAD WAYPOINTS] No waypoints found in graph')
+                return 0
+
+            loaded_count = 0
+            for waypoint in graph.waypoints:
+                name = waypoint.annotations.name if waypoint.annotations.name else 'unnamed'
+
+                # Only load manual waypoints (wp_N format)
+                if not (name.startswith('wp_') and len(name.split('_')) == 2 and name.split('_')[-1].isdigit()):
+                    continue
+
+                # Extract position and orientation
+                transform = waypoint.waypoint_tform_ko
+                x = transform.position.x
+                y = transform.position.y
+                z = transform.position.z
+
+                # Extract yaw from quaternion
+                quat = transform.rotation
+                yaw = np.arctan2(2.0 * (quat.w * quat.z + quat.x * quat.y),
+                                1.0 - 2.0 * (quat.y * quat.y + quat.z * quat.z))
+
+                # Store in waypoint_poses
+                self.waypoint_poses[name] = {
+                    'x': x,
+                    'y': y,
+                    'z': z,
+                    'yaw': yaw,
+                    'waypoint_id': waypoint.id,
+                    'cell_row': None,  # Will be updated if available
+                    'cell_col': None
+                }
+
+                loaded_count += 1
+                print(f'[LOAD WAYPOINTS] ✓ Loaded {name}: pos=({x:.3f}, {y:.3f}, {z:.3f}), yaw={np.degrees(yaw):.1f}°, ID={waypoint.id}')
+
+            print(f'[LOAD WAYPOINTS] Successfully loaded {loaded_count} manual waypoints\n')
+            return loaded_count
+
+        except Exception as e:
+            print(f'[LOAD WAYPOINTS] ✗ Error loading waypoints: {e}')
+            return 0
+
+    def update_waypoint_cells_from_map(self, env_map):
+        """
+        Update cell information for all waypoints in waypoint_poses based on their positions.
+        This should be called after loading waypoints and having a valid environment map.
+
+        Args:
+            env_map: EnvironmentMap object with origin set
+
+        Returns:
+            int: Number of waypoints updated with cell information
+        """
+        print(f'\n[UPDATE CELLS] Updating cell information for waypoints...')
+
+        if not env_map:
+            print(f'[UPDATE CELLS] ✗ Environment map not initialized')
+            return 0
+
+        updated_count = 0
+        for wp_name, wp_data in self.waypoint_poses.items():
+            # Only update manual waypoints
+            if not (wp_name.startswith('wp_') and len(wp_name.split('_')) == 2 and wp_name.split('_')[-1].isdigit()):
+                continue
+
+            x = wp_data['x']
+            y = wp_data['y']
+
+            # Convert world coordinates to grid cell
+            row, col = env_map.get_cell_from_world(x, y)
+
+            # Check if cell is within grid bounds
+            if 0 <= row < env_map.rows and 0 <= col < env_map.cols:
+                wp_data['cell_row'] = row
+                wp_data['cell_col'] = col
+                updated_count += 1
+                print(f'[UPDATE CELLS] ✓ {wp_name}: pos=({x:.3f}, {y:.3f}) → cell=({row}, {col})')
+            else:
+                print(f'[UPDATE CELLS] ⚠ {wp_name}: pos=({x:.3f}, {y:.3f}) → cell=({row}, {col}) out of bounds (grid: {env_map.rows}x{env_map.cols})')
+
+        print(f'[UPDATE CELLS] Updated {updated_count} waypoints with cell information\n')
+        return updated_count
 
     def _generate_unique_map_folder(self, base_name='downloaded_graph'):
         """
@@ -301,7 +395,8 @@ class RecordingInterface(object):
 
     def find_shortest_path(self, from_waypoint_name, to_waypoint_name, env_map):
         """
-        Find the shortest path between two waypoints using Dijkstra's algorithm.
+        Find the shortest path between two MANUAL waypoints using Dijkstra's algorithm.
+        Only considers waypoints with wp_N format (manually created waypoints).
         If missing edges are found between adjacent visited cells, they are automatically created.
 
         Args:
@@ -314,6 +409,7 @@ class RecordingInterface(object):
         """
         print(f'\n[SHORTEST PATH] {"="*70}')
         print(f'[SHORTEST PATH] Finding optimal path: {from_waypoint_name} → {to_waypoint_name}')
+        print(f'[SHORTEST PATH] Considering ONLY manual waypoints (wp_N format)')
 
         # Get current graph structure
         graph_data = self.get_graph_structure()
@@ -324,33 +420,57 @@ class RecordingInterface(object):
             print(f'[SHORTEST PATH] ✗ No waypoints in graph')
             return None
 
-        # Build waypoint name to ID mapping
+        # Filter only manual waypoints (wp_N format)
+        manual_waypoints = []
+        for wp in waypoints:
+            name = wp.annotations.name
+            if name and name.startswith('wp_') and len(name.split('_')) == 2 and name.split('_')[-1].isdigit():
+                manual_waypoints.append(wp)
+
+        if not manual_waypoints:
+            print(f'[SHORTEST PATH] ✗ No manual waypoints found in graph')
+            return None
+
+        print(f'[SHORTEST PATH] Found {len(manual_waypoints)} manual waypoints (filtered from {len(waypoints)} total)')
+
+        # Build waypoint name to ID mapping (only for manual waypoints)
         wp_name_to_id = {}
         wp_id_to_name = {}
-        for wp in waypoints:
+        for wp in manual_waypoints:
             name = wp.annotations.name
             wp_name_to_id[name] = wp.id
             wp_id_to_name[wp.id] = name
 
         # Check if waypoints exist
         if from_waypoint_name not in wp_name_to_id:
-            print(f'[SHORTEST PATH] ✗ Starting waypoint {from_waypoint_name} not found')
+            print(f'[SHORTEST PATH] ✗ Starting waypoint {from_waypoint_name} not found or not manual')
             return None
         if to_waypoint_name not in wp_name_to_id:
-            print(f'[SHORTEST PATH] ✗ Destination waypoint {to_waypoint_name} not found')
+            print(f'[SHORTEST PATH] ✗ Destination waypoint {to_waypoint_name} not found or not manual')
             return None
 
-        # Build adjacency list from existing edges
+        # Build adjacency list from existing edges (only between manual waypoints)
         adjacency = {name: [] for name in wp_name_to_id.keys()}
+        edge_count = 0
         for edge in edges:
             from_id = edge.id.from_waypoint
             to_id = edge.id.to_waypoint
+            # Only include edges between manual waypoints
             if from_id in wp_id_to_name and to_id in wp_id_to_name:
                 from_name = wp_id_to_name[from_id]
                 to_name = wp_id_to_name[to_id]
-                adjacency[from_name].append(to_name)
+                # Avoid duplicate edges in adjacency list
+                if to_name not in adjacency[from_name]:
+                    adjacency[from_name].append(to_name)
+                    edge_count += 1
 
-        print(f'[SHORTEST PATH] Graph has {len(waypoints)} waypoints and {len(edges)} edges')
+        print(f'[SHORTEST PATH] Graph has {len(manual_waypoints)} manual waypoints and {edge_count} edges between them')
+
+        # Debug: Log adjacency list for key waypoints
+        if from_waypoint_name in adjacency:
+            print(f'[SHORTEST PATH] {from_waypoint_name} → {adjacency[from_waypoint_name]}')
+        if to_waypoint_name in adjacency:
+            print(f'[SHORTEST PATH] {to_waypoint_name} → {adjacency[to_waypoint_name]}')
 
         # Try to find path with existing edges first
         path = self._dijkstra(from_waypoint_name, to_waypoint_name, adjacency)
@@ -372,9 +492,24 @@ class RecordingInterface(object):
             # Rebuild graph and try again
             print(f'[SHORTEST PATH] Retrying pathfinding with {edges_created} new edges...')
             graph_data = self.get_graph_structure()
+            waypoints = graph_data['waypoints']
             edges = graph_data['edges']
 
-            # Rebuild adjacency list
+            # Rebuild waypoint mappings (in case graph structure changed)
+            manual_waypoints = []
+            for wp in waypoints:
+                name = wp.annotations.name
+                if name and name.startswith('wp_') and len(name.split('_')) == 2 and name.split('_')[-1].isdigit():
+                    manual_waypoints.append(wp)
+
+            wp_name_to_id = {}
+            wp_id_to_name = {}
+            for wp in manual_waypoints:
+                name = wp.annotations.name
+                wp_name_to_id[name] = wp.id
+                wp_id_to_name[wp.id] = name
+
+            # Rebuild adjacency list (avoid duplicates)
             adjacency = {name: [] for name in wp_name_to_id.keys()}
             for edge in edges:
                 from_id = edge.id.from_waypoint
@@ -382,7 +517,9 @@ class RecordingInterface(object):
                 if from_id in wp_id_to_name and to_id in wp_id_to_name:
                     from_name = wp_id_to_name[from_id]
                     to_name = wp_id_to_name[to_id]
-                    adjacency[from_name].append(to_name)
+                    # Avoid duplicate edges
+                    if to_name not in adjacency[from_name]:
+                        adjacency[from_name].append(to_name)
 
             path = self._dijkstra(from_waypoint_name, to_waypoint_name, adjacency)
 
@@ -398,7 +535,8 @@ class RecordingInterface(object):
 
     def _create_missing_edges_for_path(self, from_waypoint_name, to_waypoint_name, env_map):
         """
-        Create missing edges between waypoints in adjacent visited cells to enable shortest path.
+        Create missing edges between MANUAL waypoints in adjacent visited cells to enable shortest path.
+        Only considers waypoints with wp_N format.
 
         Args:
             from_waypoint_name: Starting waypoint name
@@ -413,13 +551,19 @@ class RecordingInterface(object):
         # Get all manual waypoints with cell information
         waypoints_with_cells = {}
         for wp_name, wp_data in self.waypoint_poses.items():
+            # Only consider manual waypoints (wp_N format)
+            if not (wp_name.startswith('wp_') and len(wp_name.split('_')) == 2 and wp_name.split('_')[-1].isdigit()):
+                continue
+
             if wp_data.get('cell_row') is not None and wp_data.get('cell_col') is not None:
                 cell = (wp_data['cell_row'], wp_data['cell_col'])
                 waypoints_with_cells[wp_name] = cell
 
         if len(waypoints_with_cells) < 2:
-            print(f'[EDGE CREATION] Not enough waypoints with cell data ({len(waypoints_with_cells)})')
+            print(f'[EDGE CREATION] Not enough manual waypoints with cell data ({len(waypoints_with_cells)})')
             return 0
+
+        print(f'[EDGE CREATION] Checking {len(waypoints_with_cells)} manual waypoints with cell data')
 
         # Find all pairs of waypoints in adjacent visited cells
         waypoint_names = list(waypoints_with_cells.keys())
@@ -463,6 +607,14 @@ class RecordingInterface(object):
         """
         import heapq
 
+        # Verify start and end are in adjacency
+        if start not in adjacency:
+            print(f'[DIJKSTRA] ✗ Start waypoint {start} not in graph')
+            return None
+        if end not in adjacency:
+            print(f'[DIJKSTRA] ✗ End waypoint {end} not in graph')
+            return None
+
         # Priority queue: (distance, waypoint_name)
         pq = [(0, start)]
         distances = {start: 0}
@@ -485,10 +637,13 @@ class RecordingInterface(object):
                 while node is not None:
                     path.append(node)
                     node = previous.get(node)
-                return list(reversed(path))
+                path_reversed = list(reversed(path))
+                print(f'[DIJKSTRA] ✓ Path found: {" → ".join(path_reversed)} (distance: {current_dist})')
+                return path_reversed
 
             # Explore neighbors
-            for neighbor in adjacency.get(current, []):
+            neighbors = adjacency.get(current, [])
+            for neighbor in neighbors:
                 if neighbor in visited:
                     continue
 
@@ -501,6 +656,8 @@ class RecordingInterface(object):
                     heapq.heappush(pq, (new_dist, neighbor))
 
         # No path found
+        print(f'[DIJKSTRA] ✗ No path exists from {start} to {end}')
+        print(f'[DIJKSTRA]   Visited {len(visited)} waypoints: {visited}')
         return None
 
     def navigate_shortest_path(self, from_waypoint_name, to_waypoint_name, env_map, robot_state_client):
@@ -1161,15 +1318,28 @@ class RecordingInterface(object):
                     skipped_count += 1
                     continue
 
-            # Extract position from waypoint_tform_ko (waypoint transform from kinematic odometry)
-            transform = waypoint.waypoint_tform_ko
+            # Use saved position from waypoint_poses if available (VISION frame)
+            # Otherwise fallback to waypoint_tform_ko (less accurate for distance calculations)
+            if name in self.waypoint_poses:
+                # Use saved VISION frame position (accurate for distance calculations)
+                x = self.waypoint_poses[name]['x']
+                y = self.waypoint_poses[name]['y']
+                z = self.waypoint_poses[name]['z']
+            else:
+                # Fallback to waypoint_tform_ko (kinematic odometry frame)
+                # WARNING: This may not be accurate for distance calculations!
+                transform = waypoint.waypoint_tform_ko
+                x = transform.position.x
+                y = transform.position.y
+                z = transform.position.z
+                print(f"  ⚠️ WARNING: Waypoint '{name}' not found in waypoint_poses, using waypoint_tform_ko (may be inaccurate)")
 
             details = {
                 'id': waypoint.id,
                 'name': name,
-                'x': transform.position.x,
-                'y': transform.position.y,
-                'z': transform.position.z,
+                'x': x,
+                'y': y,
+                'z': z,
                 'waypoint_obj': waypoint
             }
             waypoint_details.append(details)
