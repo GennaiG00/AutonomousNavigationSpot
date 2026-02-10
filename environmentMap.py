@@ -177,19 +177,6 @@ class EnvironmentMap(object):
             return self.map[row][col] == 1
         return False
 
-    def is_visited(self, row, col):
-        """
-        Alias for is_cell_visited. Check if a cell is marked as visited.
-
-        Args:
-            row: Row of the cell
-            col: Column of the cell
-
-        Returns:
-            bool: True if cell is visited (value=1), False otherwise
-        """
-        return self.is_cell_visited(row, col)
-
     def is_point_in_cell(self, x, y, target_row, target_col):
         """
         Verifica se un punto in coordinate world è dentro una cella specifica.
