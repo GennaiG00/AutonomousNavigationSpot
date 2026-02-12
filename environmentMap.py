@@ -1163,3 +1163,18 @@ class EnvironmentMap(object):
         if hasattr(self, 'current_cell'):
             print(f"Current cell: {self.current_cell}")
         print("-----------------------\n")
+
+    def get_visited_cells(self):
+        """
+        Get all cells that have been visited (value = 1).
+
+        Returns:
+            list: List of (row, col) tuples for all visited cells
+        """
+        visited = []
+        for row in range(self.rows):
+            for col in range(self.cols):
+                if self.map[row][col] == 1:
+                    visited.append((row, col))
+        return visited
+

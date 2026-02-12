@@ -2,13 +2,13 @@ import os
 import sys
 import time
 from time import sleep
+from datetime import datetime
 import numpy as np
 
 import bosdyn.client
 import bosdyn.client.lease
 import bosdyn.client.util
 import bosdyn.geometry
-from bosdyn.client import robot
 from bosdyn.client.frame_helpers import *
 from bosdyn.client.robot_command import (RobotCommandBuilder, RobotCommandClient, blocking_stand)
 from bosdyn.client.local_grid import LocalGridClient
@@ -22,6 +22,7 @@ import environmentMap
 import spotUtils
 
 # TODO: check if we can avoid to set a sleep after each movement command
+# TODO: change the folder destination of the name download of graph
 
 def find_nearest_waypoint_to_cell(env, target_cell, recording_interface):
     """
@@ -295,10 +296,14 @@ def draw_explored_sides(ax, cell_x, cell_y, half_size, sides_status, cos_yaw, si
 
 
 def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
-                                   candidates, chosen_point, iteration, env=None):
+                                   candidates, chosen_point, iteration, env=None, save_path=None, recordingInterface=None):
     """
     Visualize the no-step grid with sampled candidates and chosen point.
     Optionally overlay global grid map (only cells visible within local grid bounds).
+
+    Args:
+        save_path: If provided, save the figure to this path
+        recordingInterface: RecordingInterface instance to get edge data for waypoint connections
     """
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches
@@ -423,15 +428,49 @@ def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
                             local_y_min - 0.5 <= wp_y <= local_y_max + 0.5):
                             visible_waypoints.append((wp_x, wp_y, i))
 
-            # Draw lines connecting waypoints (in order)
+            # Draw lines connecting waypoints based on ACTUAL EDGES in the graph
+            # Only draw connections that exist as real edges, not sequential order
             if type(visible_waypoints) != int:
-                if isinstance(visible_waypoints, list) and len(visible_waypoints) > 1:
-                    for i in range(len(visible_waypoints) - 1):
-                        wp1 = visible_waypoints[i]
-                        wp2 = visible_waypoints[i + 1]
-                        ax.plot([wp1[0], wp2[0]], [wp1[1], wp2[1]],
-                               'm--', linewidth=2, alpha=0.5, zorder=3,
-                               label='Waypoint path' if i == 0 else '')
+                if isinstance(visible_waypoints, list) and len(visible_waypoints) > 0 and recordingInterface is not None:
+                    # Get edges from the graph
+                    try:
+                        edges = recordingInterface.get_edge_list()
+                        waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
+
+                        # Create mapping from waypoint index to position
+                        # env.waypoints is indexed by order of creation
+                        # We need to match waypoint names to their positions
+
+                        edge_drawn = False
+                        for edge in edges:
+                            from_id = edge.id.from_waypoint
+                            to_id = edge.id.to_waypoint
+
+                            # Find positions for these waypoint IDs
+                            from_pos = None
+                            to_pos = None
+
+                            for cell, wp_data in waypoints_by_cell.items():
+                                if wp_data['id'] == from_id:
+                                    from_pos = (wp_data['x'], wp_data['y'])
+                                if wp_data['id'] == to_id:
+                                    to_pos = (wp_data['x'], wp_data['y'])
+
+                            # Draw edge if both waypoints have positions and are visible
+                            if from_pos is not None and to_pos is not None:
+                                # Check if within visible bounds
+                                if ((local_x_min - 0.5 <= from_pos[0] <= local_x_max + 0.5 and
+                                     local_y_min - 0.5 <= from_pos[1] <= local_y_max + 0.5) and
+                                    (local_x_min - 0.5 <= to_pos[0] <= local_x_max + 0.5 and
+                                     local_y_min - 0.5 <= to_pos[1] <= local_y_max + 0.5)):
+
+                                    ax.plot([from_pos[0], to_pos[0]], [from_pos[1], to_pos[1]],
+                                           'm--', linewidth=2, alpha=0.5, zorder=3,
+                                           label='Waypoint edges' if not edge_drawn else '')
+                                    edge_drawn = True
+                    except Exception as e:
+                        # Fallback: don't draw any edges if we can't get them
+                        print(f"[VIZ] Warning: Could not get edges: {e}")
 
             # Draw waypoints with numbers on top
                 for wp_x, wp_y, idx in visible_waypoints:
@@ -513,12 +552,18 @@ def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
     ax.grid(True, alpha=0.3)
     ax.legend(loc='upper right', fontsize=10)
     plt.tight_layout()
+
+    # Save figure if save_path provided
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"[VISUALIZATION] Saved to: {save_path}")
+
     plt.pause(0.5)
     plt.close()
 
 
 def attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client,
-                                      env, target_row, target_col):
+                                      env, target_row, target_col, mission_folder=None, iteration=0, recordingInterface=None):
     """
     Attempt to enter a target cell from the current robot position.
 
@@ -536,6 +581,9 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
         env: EnvironmentMap instance
         target_row: Row of target cell to enter
         target_col: Column of target cell to enter
+        mission_folder: Path to save visualization files
+        iteration: Current iteration number for file naming
+        recordingInterface: RecordingInterface for getting edge data
 
     Returns:
         bool: True if successfully entered cell, False otherwise
@@ -597,11 +645,15 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
     print(f"[INFO] Distance to target: {distance:.2f}m")
 
-    #Visualize target with sampled points
+    # Visualize target with sampled points and save to mission folder
+    save_path = None
+    if mission_folder:
+        save_path = os.path.join(mission_folder, f"iteration_{iteration}_cell_{target_row}_{target_col}.png")
+
     visualize_grid_with_candidates(
         pts, cells_no_step, color, robot_x, robot_y,
         {'rejected': rejected_samples, 'valid': valid_samples},
-        (target_x, target_y), 0, env
+        (target_x, target_y), iteration, env, save_path, recordingInterface
     )
 
     # Calculate yaw to face the target
@@ -705,7 +757,7 @@ def realign_robot_to_waypoint_orientation(self, waypoint_name):
     command_client.robot_command(RobotCommandBuilder.stop_command())
     return False
 
-#TODO: try to use EXTENT local grid
+#TODO: try to use EXTENT local grid(è una cagata pazzesca)
 
 def easy_walk(options):
     robot, lease_client, robot_state_client, client_metadata = spotLogInUtils.setLogInfo(options)
@@ -743,7 +795,7 @@ def easy_walk(options):
         # Create first waypoint in initial cell (0, 0)
         recordingInterface.create_default_waypoint(cell_row=0, cell_col=0)
 
-        env = environmentMap.EnvironmentMap(rows=4, cols=15, cell_size=2)
+        env = environmentMap.EnvironmentMap(rows=4, cols=4, cell_size=1)
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
 
         yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y),
@@ -758,12 +810,32 @@ def easy_walk(options):
         print(f'[INIT] Boot position: x={x_boot:.3f}, y={y_boot:.3f}, z={z_boot:.3f}')
         print(f'[INIT] Boot orientation: yaw={np.rad2deg(yaw_boot):.1f}°')
 
+        # Create mission folder for saving visualizations and graph
+        # All graphs are saved in: graph/Missione_DD-MM-YYYY_HH-MM-SS/
+        mission_timestamp = datetime.now().strftime("Mission_%d-%m-%Y_%H-%M-%S")
+        base_graph_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "graph")
+        os.makedirs(base_graph_folder, exist_ok=True)
+        graph_folder = os.path.join(base_graph_folder, mission_timestamp)
+        os.makedirs(graph_folder, exist_ok=True)
+
+        # Also create MissionMap folder for visualizations (separate from graphs)
+        mission_map_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MissionMap", mission_timestamp)
+        os.makedirs(mission_map_folder, exist_ok=True)
+        mission_folder = mission_map_folder  # For visualization files
+
+        print(f'[INIT] Mission folder created: {mission_folder}')
+        print(f'[INIT] Graph folder created: {graph_folder}')
+
+        # Update recording interface to save graph in mission folder
+        recordingInterface.set_download_filepath(graph_folder)
+
         # Generate serpentine path (lawnmower pattern)
         path = env.generate_serpentine_path()
 
         frontier = []
         cell_attempt_count = {}
         current_path_index = 0
+        visualization_counter = 0  # Counter for visualization files
 
         x, y, z, _ = spotUtils.getPosition(robot_state_client)
         robot_row, robot_col = env.get_cell_from_world(x, y)
@@ -793,7 +865,8 @@ def easy_walk(options):
                 selected_border = min(borders_in_frontier, key=lambda b: b[2])
                 print(f"[BORDER] Selezionato border con rank minore: ({selected_border[0]},{selected_border[1]}) rank={selected_border[2]}")
 
-                check = attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client, env, selected_border[0], selected_border[1])
+                check = attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client, env, selected_border[0], selected_border[1], mission_folder, visualization_counter, recordingInterface)
+                visualization_counter += 1
                 frontier.remove(selected_border)
                 if check:
                     env.update_position(x, y)
@@ -805,18 +878,6 @@ def easy_walk(options):
                     x_new, y_new, _, _ = spotUtils.getPosition(robot_state_client)
                     robot_row, robot_col = env.get_cell_from_world(x_new, y_new)
                     frontier.extend(find_new_borders(env, robot_row, robot_col, path, frontier))
-
-                    visualize_grid_with_candidates(
-                        pts=np.array([[x_new, y_new]]),
-                        cells_no_step=[],
-                        color=np.array([[255, 255, 255]]),
-                        robot_x=x_new,
-                        robot_y=y_new,
-                        candidates={'valid': [], 'rejected': []},
-                        chosen_point=None,
-                        iteration=f"{current_path_index}_success",
-                        env=env
-                    )
             else:
                 lowest_rank_cell = env.get_lowest_rank_from_frontier_list(frontier, path)
 
@@ -825,64 +886,155 @@ def easy_walk(options):
 
                     print(f"\n[TARGET] Cella con rank più basso: ({target_row},{target_col}) rank={rank}")
 
-                    # NUOVO: Cerca waypoint più vicino usando distanza tra CELLE
-                    # invece che distanza euclidea tra coordinate
-                    waypoint = recordingInterface.find_nearest_waypoint_to_cell(target_row, target_col)
-                    if waypoint is not None:
-                        # Stop registrazione prima di navigare
-                        recordingInterface.stop_recording()
-                        recordingInterface.download_full_graph()
+                    # Get current position
+                    x_current, y_current, _, _ = spotUtils.getPosition(robot_state_client)
+                    current_row, current_col = env.get_cell_from_world(x_current, y_current)
 
-                        # Naviga al waypoint più vicino
-                        success = recordingInterface.navigate_to_waypoint(waypoint['id'], robot_state_client)
+                    # Use grid-based path optimization to find shortest path
+                    print(f"\n[PATH_OPTIMIZE] Finding optimized path from ({current_row},{current_col}) to ({target_row},{target_col})")
 
-                        if success:
-                            recordingInterface.realign_robot_to_waypoint_orientation(waypoint['name'])
+                    # Stop recording to download and analyze graph
+                    recordingInterface.stop_recording()
+                    recordingInterface.download_full_graph()
+
+                    # Find shortest path (WITHOUT creating edges yet)
+                    path_result = recordingInterface.find_and_optimize_path(
+                        start_cell=(current_row, current_col),
+                        end_cell=(target_row, target_col),
+                        env_map=env,
+                        create_missing_edges=False  # Don't create edges yet
+                    )
+
+                    if path_result['success']:
+                        print(f"\n[PATH_OPTIMIZE] Path found: {len(path_result['cell_path'])-1} hops")
+                        print(f"[PATH_OPTIMIZE] Waypoints: {' -> '.join(path_result['waypoint_names'])}")
+
+                        # Create missing edges if needed (requires recording to be active)
+                        if path_result['missing_edges']:
+                            print(f"[PATH_OPTIMIZE] Found {len(path_result['missing_edges'])} missing edges - creating them...")
+
+                            # Restart recording to create edges
                             recordingInterface.start_recording()
 
-                            # Prova a entrare nella cella target
+                            for from_name, to_name in path_result['missing_edges']:
+                                success = recordingInterface.create_edge_between_waypoints(from_name, to_name)
+                                if success:
+                                    path_result['edges_created'].append((from_name, to_name))
+
+                            print(f"[PATH_OPTIMIZE] Created {len(path_result['edges_created'])} edges")
+
+                            # Stop recording again for navigation
+                            recordingInterface.stop_recording()
+
+                            # Re-download graph with new edges
+                            recordingInterface.download_full_graph()
+
+                        if path_result['edges_created']:
+                            print(f"[PATH_OPTIMIZE] Created {len(path_result['edges_created'])} missing edges")
+                            # Re-download graph after creating edges
+                            recordingInterface.download_full_graph()
+
+                        # Get waypoints by cell for navigation
+                        waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
+
+                        # IMPORTANTE: Non navigare fino alla cella target!
+                        # Dobbiamo fermarci al waypoint PIU' VICINO alla cella target
+                        # (l'ultimo waypoint PRIMA della cella target) e poi entrare con attempt_enter_cell_from_position
+
+                        # I waypoint nel path sono: [waypoint_corrente, ..., waypoint_vicino_target]
+                        # Se la cella target NON ha un waypoint, l'ultimo waypoint è il più vicino
+                        # Se la cella target HA un waypoint, dobbiamo fermarci al penultimo
+
+                        # Verifica se l'ultima cella nel path è la cella target
+                        waypoints_to_navigate = path_result['waypoint_names'][1:]  # Skip first (already there)
+
+                        # Se l'ultimo waypoint è nella cella target, non dobbiamo navigarci
+                        # ma fermarci al waypoint precedente
+                        last_cell_in_path = path_result['cell_path'][-1] if path_result['cell_path'] else None
+
+                        if last_cell_in_path == (target_row, target_col) and len(waypoints_to_navigate) > 1:
+                            # L'ultimo waypoint è nella cella target - fermati al penultimo
+                            waypoints_to_navigate = waypoints_to_navigate[:-1]
+                            print(f"[NAV] Target cell has waypoint - stopping at previous waypoint")
+                        elif last_cell_in_path == (target_row, target_col) and len(waypoints_to_navigate) == 1:
+                            # C'è solo un waypoint ed è nella cella target - non navigare, siamo già vicini
+                            waypoints_to_navigate = []
+                            print(f"[NAV] Target cell is adjacent - no navigation needed, attempting direct entry")
+
+                        # Navigate through waypoints (fermarsi PRIMA della cella target)
+                        navigation_success = True
+                        for i, waypoint_name in enumerate(waypoints_to_navigate, 1):
+                            print(f"\n[NAV] Step {i}/{len(waypoints_to_navigate)}: Navigating to {waypoint_name}")
+
+                            # Find waypoint data
+                            waypoint_data = None
+                            for cell, wp_data in waypoints_by_cell.items():
+                                if wp_data['name'] == waypoint_name:
+                                    waypoint_data = wp_data
+                                    break
+
+                            if waypoint_data:
+                                success = recordingInterface.navigate_to_waypoint(
+                                    waypoint_data['id'],
+                                    robot_state_client
+                                )
+
+                                if success:
+                                    recordingInterface.realign_robot_to_waypoint_orientation(waypoint_data['name'])
+                                    print(f"[NAV] Reached {waypoint_name}")
+                                else:
+                                    print(f"[NAV] Failed to reach {waypoint_name}")
+                                    navigation_success = False
+                                    break
+                            else:
+                                print(f"[NAV] ERROR: Waypoint data not found for {waypoint_name}")
+                                navigation_success = False
+                                break
+
+                        if navigation_success:
+                            # Resume recording at target waypoint
+                            recordingInterface.start_recording()
+
+                            # Try to enter the target cell
                             check = attempt_enter_cell_from_position(
                                 local_grid_client, robot_state_client, command_client,
-                                env, lowest_rank_cell[0], lowest_rank_cell[1]
+                                env, target_row, target_col, mission_folder, visualization_counter, recordingInterface
                             )
+                            visualization_counter += 1
 
                             if check:
                                 # Success - create waypoint and update map
                                 x_final, y_final, _, _ = spotUtils.getPosition(robot_state_client)
-                                # Create waypoint saving the cell we entered
-                                recordingInterface.create_default_waypoint(cell_row=lowest_rank_cell[0], cell_col=lowest_rank_cell[1])
+                                recordingInterface.create_default_waypoint(cell_row=target_row, cell_col=target_col)
                                 env.add_waypoint(x_final, y_final)
 
+                                # Mark cell as visited (IMPORTANTE!)
+                                env.mark_cell_visited(target_row, target_col)
+
                                 # Remove from frontier
-                                frontier.remove((lowest_rank_cell[0], lowest_rank_cell[1], lowest_rank_cell[2]))
+                                frontier.remove((target_row, target_col, rank))
 
-                                # Update robot position
+                                # Update robot position and find new borders
                                 robot_row, robot_col = env.get_cell_from_world(x_final, y_final)
-
-                                # Find new borders
                                 frontier.extend(find_new_borders(env, robot_row, robot_col, path, frontier))
 
-                                print(f"[SUCCESS] Entered cell ({lowest_rank_cell[0]},{lowest_rank_cell[1]}) via waypoint navigation")
-
-                                visualize_grid_with_candidates(
-                                    pts=np.array([[x_final, y_final]]),
-                                    cells_no_step=[],
-                                    color=np.array([[255, 255, 255]]),
-                                    robot_x=x_final,
-                                    robot_y=y_final,
-                                    candidates={'valid': [], 'rejected': []},
-                                    chosen_point=None,
-                                    iteration=f"{current_path_index}_far_success",
-                                    env=env
-                                )
+                                print(f"[SUCCESS] Entered cell ({target_row},{target_col}) via optimized path")
                             else:
                                 # Failure - remove from frontier anyway
-                                frontier.remove((lowest_rank_cell[0], lowest_rank_cell[1], lowest_rank_cell[2]))
-                                print(f"[ERROR] Could not enter cell {lowest_rank_cell[0], lowest_rank_cell[1]} after navigating to waypoint {waypoint['name']}")
+                                frontier.remove((target_row, target_col, rank))
+                                print(f"[ERROR] Could not enter cell ({target_row},{target_col}) after navigating optimized path")
                         else:
-                            print(f"[ERROR] Could not navigate to waypoint {waypoint['name']} near cell {lowest_rank_cell[0], lowest_rank_cell[1]}")
+                            print(f"[ERROR] Navigation failed along optimized path")
+                            # IMPORTANTE: Riprendi la registrazione anche in caso di fallimento
+                            recordingInterface.start_recording()
+                            # Remove from frontier
+                            frontier.remove((target_row, target_col, rank))
                     else:
-                        print(f"[ERROR] No waypoint found near cell {lowest_rank_cell[0], lowest_rank_cell[1]}")
+                        print(f"[ERROR] No path found to cell ({target_row},{target_col})")
+                        # IMPORTANTE: Riprendi la registrazione anche in caso di fallimento
+                        recordingInterface.start_recording()
+                        # Remove from frontier - unreachable
+                        frontier.remove((target_row, target_col, rank))
 
             if len(frontier) == 0:
                 break
@@ -912,12 +1064,12 @@ def easy_walk(options):
         recordingInterface.find_nearest_waypoint_to_position(x, y)
         recordingInterface.navigate_to_first_waypoint(robot_state_client)
         command_client.robot_command(RobotCommandBuilder.synchro_sit_command(), end_time_secs=time.time() + 20)
-        sleep(1)
+        sleep(3)
         robot.power_off(cut_immediately=False)
         recordingInterface.download_full_graph()
         estop.stop()
 
-# FIXME Change hostname for Jetson/localhost
+# FIXME Change hostname for Jetson/localhost ma tanto è rotta
 def main():
     # Instead of argparse, create an options object manually
     options = SimpleNamespace()
