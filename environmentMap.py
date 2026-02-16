@@ -825,6 +825,7 @@ class EnvironmentMap(object):
             print(f"  Status: UNEXPLORED (no attempts)")
         else:
             print(f"  Status: PARTIALLY EXPLORED")
+
     def set_origin(self, x, y, yaw=0.0, start_row=0, start_col=0):
         """
         Set the world coordinates (x, y, yaw) as the origin of the grid.

@@ -902,7 +902,8 @@ def easy_walk(options):
                         start_cell=(current_row, current_col),
                         end_cell=(target_row, target_col),
                         env_map=env,
-                        create_missing_edges=False  # Don't create edges yet
+                        create_missing_edges=False,  # Don't create edges yet
+                        cell_size=env.cell_size  # Pass cell size for accurate path verification
                     )
 
                     if path_result['success']:
@@ -936,14 +937,6 @@ def easy_walk(options):
 
                         # Get waypoints by cell for navigation
                         waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
-
-                        # IMPORTANTE: Non navigare fino alla cella target!
-                        # Dobbiamo fermarci al waypoint PIU' VICINO alla cella target
-                        # (l'ultimo waypoint PRIMA della cella target) e poi entrare con attempt_enter_cell_from_position
-
-                        # I waypoint nel path sono: [waypoint_corrente, ..., waypoint_vicino_target]
-                        # Se la cella target NON ha un waypoint, l'ultimo waypoint è il più vicino
-                        # Se la cella target HA un waypoint, dobbiamo fermarci al penultimo
 
                         # Verifica se l'ultima cella nel path è la cella target
                         waypoints_to_navigate = path_result['waypoint_names'][1:]  # Skip first (already there)
