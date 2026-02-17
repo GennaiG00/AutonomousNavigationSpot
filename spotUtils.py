@@ -6,4 +6,4 @@ def getPosition(robot_state_client):
     transforms_snapshot = robot_state.kinematic_state.transforms_snapshot
     vision_tform_body = get_a_tform_b(transforms_snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME)
 
-    return vision_tform_body.x, vision_tform_body.y, vision_tform_body.z, vision_tform_body.rotation
+    return vision_tform_body.position.x, vision_tform_body.position.y, vision_tform_body.position.z, vision_tform_body.rotation

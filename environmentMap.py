@@ -290,7 +290,7 @@ class EnvironmentMap(object):
 
         Example:
             # Using path + blocked_index + robot position (recommended)
-            return_visited_cells_near_blocked(path=path, blocked_index=5, robot_row=1, robot_col=2)
+            return_visited_fcells_near_blocked(path=path, blocked_index=5, robot_row=1, robot_col=2)
 
             # Using explicit coordinates
             return_visited_cells_near_blocked(blocked_row=1, blocked_col=1, robot_row=1, robot_col=2)
@@ -917,9 +917,6 @@ class EnvironmentMap(object):
         """
         Convert world coordinates to grid cell without marking as visited.
         Coordinates are rotated to align with the robot's initial orientation.
-
-        ⚠️ IMPORTANTE: Questo metodo assume che origin corrisponda al CENTRO della cella iniziale.
-        Usa round() invece di int() per arrotondare alla cella più vicina.
         """
         delta_x = x - self.origin_x
         delta_y = y - self.origin_y

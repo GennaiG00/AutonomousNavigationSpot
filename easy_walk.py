@@ -296,14 +296,13 @@ def draw_explored_sides(ax, cell_x, cell_y, half_size, sides_status, cos_yaw, si
 
 
 def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
-                                   candidates, chosen_point, iteration, env=None, save_path=None, recordingInterface=None):
+                                   candidates, chosen_point, iteration, env=None, save_path=None):
     """
     Visualize the no-step grid with sampled candidates and chosen point.
     Optionally overlay global grid map (only cells visible within local grid bounds).
 
     Args:
         save_path: If provided, save the figure to this path
-        recordingInterface: RecordingInterface instance to get edge data for waypoint connections
     """
     import matplotlib.pyplot as plt
     import matplotlib.patches as patches
@@ -339,7 +338,7 @@ def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
 
                 half_size = env.cell_size / 2.0
 
-                # Calculate corners in grid frame
+                # Calculate corners in grid frame (non-rotated square)
                 grid_corners = [
                     (-half_size, -half_size),
                     (half_size, -half_size),
@@ -353,6 +352,7 @@ def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
 
                 world_corners = []
                 for gx, gy in grid_corners:
+                    # Apply rotation and translation
                     wx = cell_x + (gx * cos_yaw - gy * sin_yaw)
                     wy = cell_y + (gx * sin_yaw + gy * cos_yaw)
                     world_corners.append((wx, wy))
@@ -428,51 +428,8 @@ def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
                             local_y_min - 0.5 <= wp_y <= local_y_max + 0.5):
                             visible_waypoints.append((wp_x, wp_y, i))
 
-            # Draw lines connecting waypoints based on ACTUAL EDGES in the graph
-            # Only draw connections that exist as real edges, not sequential order
-            if type(visible_waypoints) != int:
-                if isinstance(visible_waypoints, list) and len(visible_waypoints) > 0 and recordingInterface is not None:
-                    # Get edges from the graph
-                    try:
-                        edges = recordingInterface.get_edge_list()
-                        waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
-
-                        # Create mapping from waypoint index to position
-                        # env.waypoints is indexed by order of creation
-                        # We need to match waypoint names to their positions
-
-                        edge_drawn = False
-                        for edge in edges:
-                            from_id = edge.id.from_waypoint
-                            to_id = edge.id.to_waypoint
-
-                            # Find positions for these waypoint IDs
-                            from_pos = None
-                            to_pos = None
-
-                            for cell, wp_data in waypoints_by_cell.items():
-                                if wp_data['id'] == from_id:
-                                    from_pos = (wp_data['x'], wp_data['y'])
-                                if wp_data['id'] == to_id:
-                                    to_pos = (wp_data['x'], wp_data['y'])
-
-                            # Draw edge if both waypoints have positions and are visible
-                            if from_pos is not None and to_pos is not None:
-                                # Check if within visible bounds
-                                if ((local_x_min - 0.5 <= from_pos[0] <= local_x_max + 0.5 and
-                                     local_y_min - 0.5 <= from_pos[1] <= local_y_max + 0.5) and
-                                    (local_x_min - 0.5 <= to_pos[0] <= local_x_max + 0.5 and
-                                     local_y_min - 0.5 <= to_pos[1] <= local_y_max + 0.5)):
-
-                                    ax.plot([from_pos[0], to_pos[0]], [from_pos[1], to_pos[1]],
-                                           'm--', linewidth=2, alpha=0.5, zorder=3,
-                                           label='Waypoint edges' if not edge_drawn else '')
-                                    edge_drawn = True
-                    except Exception as e:
-                        # Fallback: don't draw any edges if we can't get them
-                        print(f"[VIZ] Warning: Could not get edges: {e}")
-
-            # Draw waypoints with numbers on top
+            # Draw waypoints with numbers on top (edges removed for cleaner visualization)
+            if isinstance(visible_waypoints, list) and len(visible_waypoints) > 0:
                 for wp_x, wp_y, idx in visible_waypoints:
                     ax.plot(wp_x, wp_y, 'mo', markersize=12, markerfacecolor='magenta',
                            markeredgewidth=2.5, markeredgecolor='purple', zorder=7,
@@ -653,7 +610,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
     visualize_grid_with_candidates(
         pts, cells_no_step, color, robot_x, robot_y,
         {'rejected': rejected_samples, 'valid': valid_samples},
-        (target_x, target_y), iteration, env, save_path, recordingInterface
+        (target_x, target_y), iteration, env, save_path
     )
 
     # Calculate yaw to face the target
@@ -711,52 +668,6 @@ def find_new_borders(env, robot_row, robot_col, path, frontier):
                 new_borders_cells.append(new_border)
     return new_borders_cells
 
-def realign_robot_to_waypoint_orientation(self, waypoint_name):
-    """
-    Versione CORRETTA: Usa velocity_command per ruotare fisicamente il robot.
-    La versione precedente con 'stand' non funzionava per grandi angoli.
-    """
-    if waypoint_name not in self.waypoint_poses:
-        print(f"[REALIGN] ✗ Nessuna pose salvata per '{waypoint_name}'")
-        return False
-
-    target_yaw = self.waypoint_poses[waypoint_name]['yaw']
-
-    # Clienti necessari
-    command_client = self.robot.ensure_client(RobotCommandClient.default_service_name)
-    robot_state_client = self.robot.ensure_client('robot-state')
-
-    print(f"[REALIGN] Allineamento a {waypoint_name} (Target Yaw: {np.degrees(target_yaw):.1f}°)...")
-
-    # Loop di controllo rotazione (max 10 secondi)
-    for _ in range(20):
-        # Calcola Yaw attuale
-        x, y, z, quat = spotUtils.getPosition(robot_state_client)
-        current_yaw = np.arctan2(2.0 * (quat.w * quat.z + quat.x * quat.y), 1.0 - 2.0 * (quat.y ** 2 + quat.z ** 2))
-
-        # Calcola errore
-        delta_yaw = target_yaw - current_yaw
-        while delta_yaw > np.pi: delta_yaw -= 2 * np.pi
-        while delta_yaw < -np.pi: delta_yaw += 2 * np.pi
-
-        if abs(delta_yaw) < np.radians(2.0):  # Tolleranza 2 gradi
-            print("[REALIGN] ✓ Allineato.")
-            command_client.robot_command(RobotCommandBuilder.stop_command())
-            return True
-
-        # Ruota (Velocità proporzionale ma limitata)
-        rot_speed = np.clip(delta_yaw, -0.6, 0.6)
-        # Minima velocità per non stallare
-        if abs(rot_speed) < 0.2: rot_speed = 0.2 * np.sign(rot_speed)
-
-        cmd = RobotCommandBuilder.synchro_velocity_command(v_x=0, v_y=0, v_rot=rot_speed)
-        command_client.robot_command(cmd)
-        time.sleep(0.5)
-
-    print("[REALIGN] ⚠️ Timeout rotazione.")
-    command_client.robot_command(RobotCommandBuilder.stop_command())
-    return False
-
 #TODO: try to use EXTENT local grid(è una cagata pazzesca)
 
 def easy_walk(options):
@@ -767,8 +678,6 @@ def easy_walk(options):
     recordingInterface = navGraphUtils.RecordingInterface(robot, options.download_filepath, client_metadata)
     recordingInterface.stop_recording()
     recordingInterface.clear_map()
-
-    #TODO controlla che tutte le volte lui si va a scaricare gli ultimi waypoint
 
     with bosdyn.client.lease.LeaseKeepAlive(lease_client, must_acquire=True, return_at_exit=True):
         command_client = robot.ensure_client(RobotCommandClient.default_service_name)
@@ -810,8 +719,7 @@ def easy_walk(options):
         print(f'[INIT] Boot position: x={x_boot:.3f}, y={y_boot:.3f}, z={z_boot:.3f}')
         print(f'[INIT] Boot orientation: yaw={np.rad2deg(yaw_boot):.1f}°')
 
-        # Create mission folder for saving visualizations and graph
-        # All graphs are saved in: graph/Missione_DD-MM-YYYY_HH-MM-SS/
+
         mission_timestamp = datetime.now().strftime("Mission_%d-%m-%Y_%H-%M-%S")
         base_graph_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "graph")
         os.makedirs(base_graph_folder, exist_ok=True)
@@ -833,7 +741,6 @@ def easy_walk(options):
         path = env.generate_serpentine_path()
 
         frontier = []
-        cell_attempt_count = {}
         current_path_index = 0
         visualization_counter = 0  # Counter for visualization files
 
@@ -893,17 +800,15 @@ def easy_walk(options):
                     # Use grid-based path optimization to find shortest path
                     print(f"\n[PATH_OPTIMIZE] Finding optimized path from ({current_row},{current_col}) to ({target_row},{target_col})")
 
-                    # Stop recording to download and analyze graph
+                    # Stop recording to analyze graph (no need to download snapshots, _get_graph() is used internally)
                     recordingInterface.stop_recording()
-                    recordingInterface.download_full_graph()
 
                     # Find shortest path (WITHOUT creating edges yet)
                     path_result = recordingInterface.find_and_optimize_path(
                         start_cell=(current_row, current_col),
                         end_cell=(target_row, target_col),
                         env_map=env,
-                        create_missing_edges=False,  # Don't create edges yet
-                        cell_size=env.cell_size  # Pass cell size for accurate path verification
+                        create_missing_edges=False  # Don't create edges yet
                     )
 
                     if path_result['success']:
@@ -926,14 +831,11 @@ def easy_walk(options):
 
                             # Stop recording again for navigation
                             recordingInterface.stop_recording()
-
-                            # Re-download graph with new edges
-                            recordingInterface.download_full_graph()
+                            # Note: No need to download_full_graph - cache is invalidated by create_edge_between_waypoints
 
                         if path_result['edges_created']:
                             print(f"[PATH_OPTIMIZE] Created {len(path_result['edges_created'])} missing edges")
-                            # Re-download graph after creating edges
-                            recordingInterface.download_full_graph()
+                            # Note: No need to download_full_graph - _get_graph() will fetch fresh data
 
                         # Get waypoints by cell for navigation
                         waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
@@ -1042,7 +944,7 @@ def easy_walk(options):
         final_row, final_col = env.get_cell_from_world(x_final, y_final)
         recordingInterface.create_default_waypoint(cell_row=final_row, cell_col=final_col)
         recordingInterface.get_recording_status()
-        recordingInterface.create_new_edge()
+        # Note: Edges are created during path optimization, no need for create_new_edge
 
         # --- END OF SIMPLE MISSION ---
 
@@ -1051,14 +953,48 @@ def easy_walk(options):
         robot.operator_comment(log_comment)
         robot.logger.info('Added comment "%s" to robot log.', log_comment)
 
-        # Stop recording and download the graph
+        print(f"\n{'='*70}")
+        print(f"[RETURN_OPTIMIZE] Optimizing return path to base (wp_0)")
+        print(f"{'='*70}")
+
+        # Get current position and find optimal path back to start
+        x_current, y_current, _, _ = spotUtils.getPosition(robot_state_client)
+        current_row, current_col = env.get_cell_from_world(x_current, y_current)
+        start_row, start_col = 0, 0  # wp_0 is at cell (0,0)
+
+        print(f"[RETURN_OPTIMIZE] Current position: cell ({current_row},{current_col})")
+        print(f"[RETURN_OPTIMIZE] Target: wp_0 at cell ({start_row},{start_col})")
+
+        # Find optimal path back to start
+        return_path_result = recordingInterface.find_and_optimize_path(
+            start_cell=(current_row, current_col),
+            end_cell=(start_row, start_col),
+            env_map=env,
+            create_missing_edges=True  # Create edges if needed
+        )
+
+        if return_path_result['success']:
+            print(f"\n[RETURN_OPTIMIZE] ✓ Return path found: {len(return_path_result['cell_path'])-1} hops")
+            print(f"[RETURN_OPTIMIZE] Waypoints: {' -> '.join(return_path_result['waypoint_names'])}")
+
+            if return_path_result['edges_created']:
+                print(f"[RETURN_OPTIMIZE] Created {len(return_path_result['edges_created'])} edges for return path")
+                for from_name, to_name in return_path_result['edges_created']:
+                    print(f"  - {from_name} → {to_name}")
+        else:
+            print(f"[RETURN_OPTIMIZE] ✗ Could not optimize return path")
+
+        print(f"{'='*70}\n")
+
         recordingInterface.stop_recording()
-        x, y, z, _ = spotUtils.getPosition(robot_state_client)
-        recordingInterface.find_nearest_waypoint_to_position(x, y)
+        recordingInterface.find_nearest_waypoint_to_position(x_current, y_current)
         recordingInterface.navigate_to_first_waypoint(robot_state_client)
+
         command_client.robot_command(RobotCommandBuilder.synchro_sit_command(), end_time_secs=time.time() + 20)
         sleep(3)
         robot.power_off(cut_immediately=False)
+
+        # Save the final map to disk (includes return path optimization)
         recordingInterface.download_full_graph()
         estop.stop()
 

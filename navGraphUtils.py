@@ -404,11 +404,6 @@ class RecordingInterface(object):
                 print(f"  Cell saved: ({cell_row}, {cell_col})")
             print(f"  Status: {resp.status}\n")
 
-            # NOTE: Gli archi NON vengono creati automaticamente qui.
-            # Gli archi vengono creati SOLO durante l'ottimizzazione del percorso BFS
-            # per evitare di creare un grafo troppo grande.
-
-            # Invalidate cache since we added a new waypoint
             self.invalidate_graph_cache()
 
             return resp
@@ -811,7 +806,6 @@ class RecordingInterface(object):
 
             time.sleep(0.5)
 
-            # Controlla stato
             try:
                 feedback = self._graph_nav_client.navigation_feedback(nav_to_cmd_id)
 
@@ -820,7 +814,7 @@ class RecordingInterface(object):
                     return True
 
                 elif feedback.status == graph_nav_pb2.NavigationFeedbackResponse.STATUS_LOST:
-                    print(f"[NAV] ⚠️ STATUS_LOST rilevato durante la navigazione!")
+                    print(f"[NAV]️ STATUS_LOST rilevato durante la navigazione!")
 
                     # --- LOGICA DI RECUPERO ---
                     print(f"[NAV] Tento di forzare la localizzazione su {target_waypoint_name}...")
@@ -835,7 +829,7 @@ class RecordingInterface(object):
                         return False
 
                 elif feedback.status == graph_nav_pb2.NavigationFeedbackResponse.STATUS_STUCK:
-                    print(f"[NAV] ⚠️ Robot STUCK (bloccato).")
+                    print(f"[NAV]️ Robot STUCK (bloccato).")
                     return False
 
             except Exception as e:
@@ -943,65 +937,6 @@ class RecordingInterface(object):
             print(f"[REALIGN] ✗ Error during rotation: {e}")
             return False
 
-    def resume_recording_from_waypoint(self, waypoint_name):
-        """
-        Riprende la registrazione da un waypoint specifico, allineando prima il robot.
-
-        IMPORTANTE: Questo metodo assume che il robot sia già stato navigato con successo
-        al waypoint specificato usando navigate_to_waypoint(). Non viene fatto alcun
-        controllo di localizzazione - ci si fida che navigate_to_waypoint() abbia avuto successo.
-
-        Questo metodo:
-        1. Ri-orienta il robot per allinearlo all'orientazione originale del waypoint
-        2. Riprende la registrazione in modo continuo con la mappa precedente
-
-        Args:
-            waypoint_name: Nome del waypoint da cui riprendere (es. 'wp_5')
-
-        Returns:
-            bool: True se la ripresa è riuscita
-
-        Example:
-            # Naviga a un waypoint
-            success = recording.navigate_to_waypoint(waypoint_id, robot_state_client)
-
-            if success:
-                # Riprendi la registrazione da quel waypoint (senza controlli aggiuntivi)
-                recording.resume_recording_from_waypoint('wp_5')
-        """
-        print(f"\n{'='*70}")
-        print(f"[RESUME] Resuming recording from waypoint '{waypoint_name}'")
-        print(f"[RESUME] Assuming robot is already at this waypoint")
-        print(f"{'='*70}")
-
-        # Step 1: Realign orientation
-        print(f"\n[RESUME] Step 1/2: Realigning orientation with '{waypoint_name}'...")
-        if not self.realign_robot_to_waypoint_orientation(waypoint_name):
-            print(f"[RESUME] ⚠️ Realignment failed, continuing anyway...")
-
-        # Step 2: Resume recording
-        print(f"\n[RESUME] Step 2/2: Resuming recording...")
-
-        should_start = self.should_we_start_recording()
-        if not should_start:
-            print(f"[RESUME] ✗ System not ready for recording")
-            print(f"[RESUME] Probably already recording or map not loaded")
-            return False
-
-        try:
-            status = self._recording_client.start_recording(
-                recording_environment=self._recording_environment
-            )
-            print(f"[RESUME] ✓ Recording resumed successfully")
-            print(f"[RESUME] New session is aligned with previous map")
-            print(f"{'='*70}\n")
-            return True
-
-        except Exception as err:
-            print(f"[RESUME] ✗ Error during resume: {err}")
-            print(f"{'='*70}\n")
-            return False
-
     def get_all_manual_waypoints_with_cells(self):
         """
         Get all manual waypoints that have cell information saved.
@@ -1103,125 +1038,121 @@ class RecordingInterface(object):
         print(f"[BFS] No path found from {start_cell} to {end_cell}")
         return None
 
-    def _path_exists_in_graph(self, from_waypoint_id, to_waypoint_id, graph, cell_from, cell_to, cell_size=1.0):
+    def _path_exists_in_graph(self, from_waypoint_id, to_waypoint_id, graph, cell_from, cell_to, env_map):
         """
         Check if a path exists between two waypoints in the graph using BFS.
-        This considers ALL waypoints (manual and automatic) to find any connecting path.
+        Only considers waypoints that are INSIDE the two cells being checked.
 
-        The path is valid only if all intermediate waypoints are within the two cells
-        being considered (to avoid taking long detours).
+        This allows MULTI-HOP paths through intermediate waypoints (automatic or manual)
+        as long as all intermediate waypoints are inside cell_from or cell_to.
 
         Args:
             from_waypoint_id: ID of the source waypoint
             to_waypoint_id: ID of the destination waypoint
             graph: The downloaded graph object
-            cell_from: (row, col) of the source cell
-            cell_to: (row, col) of the destination cell
-            cell_size: Size of each cell in meters (for proximity check)
+            cell_from: (row, col) tuple of the source cell
+            cell_to: (row, col) tuple of the destination cell
+            env_map: EnvironmentMap instance to check if waypoints are in cells
 
         Returns:
-            bool: True if a path exists, False otherwise
+            bool: True if a path exists through waypoints inside the two cells, False otherwise
         """
+
         from collections import deque
 
         if from_waypoint_id == to_waypoint_id:
             return True
 
-        # Build adjacency list from edges
+        # Get positions of all waypoints and check which are inside the two cells
+        waypoints_in_cells = set()
+        waypoint_names = {}  # Map ID -> name for logging
+
+        waypoints_in_cells.add(from_waypoint_id)  # Always include source
+        waypoints_in_cells.add(to_waypoint_id)    # Always include destination
+
+        for wp in graph.waypoints:
+            wp_x = wp.waypoint_tform_ko.position.x
+            wp_y = wp.waypoint_tform_ko.position.y
+            wp_name = wp.annotations.name if wp.annotations.name else f"auto_{wp.id[:8]}"
+            waypoint_names[wp.id] = wp_name
+
+            # Check if this waypoint is inside cell_from or cell_to
+            if (env_map.is_point_in_cell(wp_x, wp_y, cell_from[0], cell_from[1]) or
+                env_map.is_point_in_cell(wp_x, wp_y, cell_to[0], cell_to[1])):
+                waypoints_in_cells.add(wp.id)
+
+        # Build adjacency list from edges (only for waypoints in the two cells)
         adjacency = {}
+        edge_count = 0
+
         for edge in graph.edges:
             from_id = edge.id.from_waypoint
             to_id = edge.id.to_waypoint
 
-            if from_id not in adjacency:
-                adjacency[from_id] = []
-            if to_id not in adjacency:
-                adjacency[to_id] = []
+            # Only include edges where BOTH endpoints are in the valid cells
+            if from_id in waypoints_in_cells and to_id in waypoints_in_cells:
+                if from_id not in adjacency:
+                    adjacency[from_id] = []
+                if to_id not in adjacency:
+                    adjacency[to_id] = []
 
-            # Edges are bidirectional
-            adjacency[from_id].append(to_id)
-            adjacency[to_id].append(from_id)
+                # Edges are bidirectional
+                adjacency[from_id].append(to_id)
+                adjacency[to_id].append(from_id)
+                edge_count += 1
 
-        # Get waypoint positions for boundary checking
-        waypoint_positions = {}
-        for wp in graph.waypoints:
-            waypoint_positions[wp.id] = {
-                'x': wp.waypoint_tform_ko.position.x,
-                'y': wp.waypoint_tform_ko.position.y
-            }
+        print(f"  Found {edge_count} edges connecting these waypoints")
 
-        # Calculate cell boundaries (with some margin for waypoints at edges)
-        # We allow waypoints that are within either of the two cells
-        cell_from_row, cell_from_col = cell_from
-        cell_to_row, cell_to_col = cell_to
-
-        # Calculate min/max bounds for the two cells combined
-        min_row = min(cell_from_row, cell_to_row)
-        max_row = max(cell_from_row, cell_to_row)
-        min_col = min(cell_from_col, cell_to_col)
-        max_col = max(cell_from_col, cell_to_col)
-
-        # Convert cell bounds to x,y coordinates (with margin)
-        margin = cell_size * 0.5  # Allow some margin
-        x_min = min_col * cell_size - margin
-        x_max = (max_col + 1) * cell_size + margin
-        y_min = min_row * cell_size - margin
-        y_max = (max_row + 1) * cell_size + margin
-
-        def is_waypoint_in_valid_area(wp_id):
-            """Check if waypoint is within the valid cell area."""
-            if wp_id == from_waypoint_id or wp_id == to_waypoint_id:
-                return True  # Always allow source and destination
-
-            if wp_id not in waypoint_positions:
-                return False
-
-            pos = waypoint_positions[wp_id]
-            # Check if waypoint is within the bounding box of the two cells
-            return (x_min <= pos['x'] <= x_max and y_min <= pos['y'] <= y_max)
-
-        # BFS to find path
+        # BFS to find path (allows multi-hop)
         if from_waypoint_id not in adjacency:
+            print(f"  ✗ Source waypoint has no edges inside cells")
             return False
 
-        queue = deque([from_waypoint_id])
+        queue = deque([(from_waypoint_id, [from_waypoint_id])])  # (current, path)
         visited = {from_waypoint_id}
 
         while queue:
-            current = queue.popleft()
+            current, path = queue.popleft()
 
             if current == to_waypoint_id:
+                # Found path! Show it
+                path_names = [waypoint_names.get(wp_id, wp_id[:8]) for wp_id in path]
+                print(f"  ✓ Multi-hop path found ({len(path)} waypoints):")
+                print(f"    {' → '.join(path_names)}")
                 return True
 
             for neighbor in adjacency.get(current, []):
-                if neighbor not in visited and is_waypoint_in_valid_area(neighbor):
+                if neighbor not in visited:
                     visited.add(neighbor)
-                    queue.append(neighbor)
+                    queue.append((neighbor, path + [neighbor]))
 
+        print(f"  ✗ No path found (searched {len(visited)} waypoints)")
         return False
 
-    def verify_and_create_missing_edges(self, cell_path, waypoints_by_cell, cell_size=1.0):
+    def verify_and_create_missing_edges(self, cell_path, waypoints_by_cell, env_map, check_loop=False):
         """
         Verify that edges exist between consecutive waypoints in the path.
         Returns list of missing edges that need to be created.
 
-        IMPORTANTE: Questa funzione considera anche i waypoint automatici.
+        IMPORTANTE: Questa funzione considera anche i waypoint automatici, MA solo
+        quelli che sono INTERNI alle due celle consecutive considerate.
         Se esiste già un percorso tra due waypoint manuali tramite waypoint
-        automatici (che sono all'interno delle celle considerate), non viene
-        creato un nuovo arco.
+        automatici interni alle celle, non viene creato un nuovo arco.
 
         Args:
             cell_path: List of (row, col) cells in order
             waypoints_by_cell: Dictionary mapping cells to waypoint data
-            cell_size: Size of each cell in meters (default 1.0)
+            env_map: EnvironmentMap instance to check if waypoints are in cells
+            check_loop: If True, also check edge from last waypoint back to first (for closed loops)
 
         Returns:
             list: List of tuples (from_waypoint_name, to_waypoint_name) for missing edges
         """
         print(f"\n[EDGE_VERIFY] Checking edges for path with {len(cell_path)} cells")
-        print(f"[EDGE_VERIFY] NOTE: Considering ALL waypoints (manual + automatic) for path detection")
+        print(f"[EDGE_VERIFY] NOTE: Considering waypoints INSIDE the two cells being checked")
+        if check_loop:
+            print(f"[EDGE_VERIFY] LOOP mode: Will also check edge from LAST → FIRST waypoint")
 
-        # Get current graph (use cache since we're just reading)
         graph = self._get_graph()
 
         # Build set of existing direct edge pairs for logging
@@ -1261,18 +1192,47 @@ class RecordingInterface(object):
             if direct_edge_exists:
                 print(f"[EDGE_VERIFY] ✓ Direct edge exists: {wp_from['name']} <-> {wp_to['name']}")
             else:
-                # Check if there's an indirect path through automatic waypoints
+                # Check if there's an indirect path through waypoints INSIDE the two cells
                 path_exists = self._path_exists_in_graph(
-                    wp_from['id'], wp_to['id'], graph, cell_from, cell_to, cell_size
+                    wp_from['id'], wp_to['id'], graph, cell_from, cell_to, env_map
                 )
 
                 if path_exists:
-                    print(f"[EDGE_VERIFY] ✓ Indirect path exists: {wp_from['name']} <-> {wp_to['name']} (via automatic waypoints)")
+                    print(f"[EDGE_VERIFY] ✓ Indirect path exists: {wp_from['name']} <-> {wp_to['name']} (via waypoints inside cells)")
                 else:
                     print(f"[EDGE_VERIFY] ✗ No path found: {wp_from['name']} <-> {wp_to['name']}")
                     missing_edges.append((wp_from['name'], wp_to['name']))
 
-        print(f"\n[EDGE_VERIFY] Summary: {len(missing_edges)} missing edges (considering automatic waypoints)")
+        # Check loop edge (last → first) if requested
+        if check_loop and len(cell_path) > 1:
+            print(f"\n[EDGE_VERIFY] === LOOP CHECK: Last waypoint → First waypoint ===")
+
+            cell_from = cell_path[-1]
+            cell_to = cell_path[0]
+
+            if cell_from in waypoints_by_cell and cell_to in waypoints_by_cell:
+                wp_from = waypoints_by_cell[cell_from]
+                wp_to = waypoints_by_cell[cell_to]
+
+                # Check direct edge
+                direct_edge_exists = ((wp_from['id'], wp_to['id']) in existing_direct_edges or
+                                      (wp_to['id'], wp_from['id']) in existing_direct_edges)
+
+                if direct_edge_exists:
+                    print(f"[EDGE_VERIFY] ✓ Direct loop edge exists: {wp_from['name']} <-> {wp_to['name']}")
+                else:
+                    # Check if there's an indirect path through waypoints INSIDE the two cells
+                    path_exists = self._path_exists_in_graph(
+                        wp_from['id'], wp_to['id'], graph, cell_from, cell_to, env_map
+                    )
+
+                    if path_exists:
+                        print(f"[EDGE_VERIFY] ✓ Indirect loop path exists: {wp_from['name']} <-> {wp_to['name']}")
+                    else:
+                        print(f"[EDGE_VERIFY] ✗ No loop path found: {wp_from['name']} <-> {wp_to['name']}")
+                        missing_edges.append((wp_from['name'], wp_to['name']))
+
+        print(f"\n[EDGE_VERIFY] Summary: {len(missing_edges)} missing edges")
         return missing_edges
 
     def create_edge_between_waypoints(self, from_waypoint_name, to_waypoint_name):
@@ -1388,30 +1348,30 @@ class RecordingInterface(object):
 
         return nearest_cell
 
-    def find_and_optimize_path(self, start_cell, end_cell, env_map, create_missing_edges=True, cell_size=1.0):
+    def find_and_optimize_path(self, start_cell, end_cell, env_map, create_missing_edges=True):
         """
         Complete workflow to find shortest path and ensure all edges exist.
 
         This method:
         1. Gets all manual waypoints with cell data
         2. Finds shortest path using BFS on the grid
-        3. Verifies edges exist between waypoints (considering automatic waypoints)
+        3. Verifies edges exist between consecutive waypoints
         4. Creates missing edges if requested
         5. Returns the optimized path
 
         IMPORTANTE: Se la cella target NON ha un waypoint, trova il waypoint
         più vicino (adiacente) alla cella target e restituisce il path fino a quello.
 
-        IMPORTANTE: La verifica degli archi considera anche i waypoint automatici.
-        Se esiste già un percorso indiretto tra due waypoint manuali tramite
-        waypoint automatici, non viene creato un nuovo arco.
+        IMPORTANTE: Per ogni coppia di celle consecutive nel percorso, controlla se
+        esiste un arco diretto tra i waypoint manuali OPPURE un percorso che passa
+        per waypoint automatici che sono INTERNI alle due celle considerate.
+        Se non esiste nessun percorso valido, crea un nuovo arco diretto.
 
         Args:
             start_cell: (row, col) starting cell
             end_cell: (row, col) destination cell
             env_map: EnvironmentMap instance
             create_missing_edges: If True, create missing edges automatically
-            cell_size: Size of each cell in meters (default 1.0)
 
         Returns:
             dict: {
@@ -1426,7 +1386,6 @@ class RecordingInterface(object):
         print(f"\n{'='*70}")
         print(f"[PATH_OPTIMIZE] Starting path optimization")
         print(f"[PATH_OPTIMIZE] From: {start_cell} -> To: {end_cell}")
-        print(f"[PATH_OPTIMIZE] Cell size: {cell_size}m")
         print(f"{'='*70}")
 
         result = {
@@ -1482,8 +1441,8 @@ class RecordingInterface(object):
 
         result['waypoint_names'] = waypoint_names
 
-        # Step 3: Verify edges (considering automatic waypoints for indirect paths)
-        missing_edges = self.verify_and_create_missing_edges(cell_path, waypoints_by_cell, cell_size)
+        # Step 3: Verify edges (considering all waypoints for indirect paths)
+        missing_edges = self.verify_and_create_missing_edges(cell_path, waypoints_by_cell, env_map)
         result['missing_edges'] = missing_edges
 
         # Step 4: Create missing edges if requested
