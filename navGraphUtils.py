@@ -910,7 +910,7 @@ class RecordingInterface(object):
             command_client.robot_command(cmd)
 
             # Wait for completion
-            time.sleep(2.0)
+            time.sleep(0.5)
 
             # Check final orientation
             x_final, y_final, z_final, quat_final = spotUtils.getPosition(robot_state_client)
@@ -1458,6 +1458,7 @@ class RecordingInterface(object):
 
         # Success if path exists (edges are optional)
         result['success'] = True
+
 
         print(f"\n{'='*70}")
         print(f"[PATH_OPTIMIZE] Optimization complete")

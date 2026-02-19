@@ -412,6 +412,7 @@ def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
                bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen',
                         alpha=0.9, edgecolor='darkgreen'))
 
+
     # Draw waypoints and robot path
     if type(env.waypoints) != int:
         if env is not None and hasattr(env, 'waypoints') and isinstance(env.waypoints, list) and len(env.waypoints) > 0:
@@ -704,7 +705,7 @@ def easy_walk(options):
         # Create first waypoint in initial cell (0, 0)
         recordingInterface.create_default_waypoint(cell_row=0, cell_col=0)
 
-        env = environmentMap.EnvironmentMap(rows=4, cols=4, cell_size=1)
+        env = environmentMap.EnvironmentMap(rows=4, cols=15, cell_size=1.5)
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
 
         yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y),
