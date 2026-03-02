@@ -182,10 +182,10 @@ class RecordingInterface(object):
 
     def force_localization_to_waypoint(self, robot_state_client, waypoint_id):
         """
-        Forza la localizzazione del robot su un waypoint specifico.
-        Da usare se il robot si perde (STATUS_LOST).
+        Force robot localization to a specific waypoint.
+        To be used if the robot gets lost (STATUS_LOST).
         """
-        print(f"\n[RECOVERY] Tentativo di ripristino localizzazione su Waypoint ID: {waypoint_id}")
+        print(f"\n[RECOVERY] Attempting to restore localization to Waypoint ID: {waypoint_id}")
 
         try:
             # 1. Prepare the guess (Guess)
@@ -208,20 +208,20 @@ class RecordingInterface(object):
                 max_distance=1.0,  # Search within 1 meter
                 max_yaw=1.0,  # Search within ~57 degrees
 
-                # Non usare fiducial, usa il waypoint ID
+                # Don't use fiducial, use waypoint ID
                 fiducial_init=graph_nav_pb2.SetLocalizationRequest.FIDUCIAL_INIT_NO_FIDUCIAL,
 
-                # CRUCIALE: Usa la visione per raffinare la posizione
+                # CRUCIAL: Use vision to refine position
                 refine_with_visual_features=True,
                 verify_visual_features_quality=True,
                 do_ambiguity_check=True
             )
 
-            print(f"[RECOVERY] ✓ Localizzazione forzata con successo!")
+            print(f"[RECOVERY] ✓ Forced localization successful!")
             return True
 
         except Exception as e:
-            print(f"[RECOVERY] ✗ Fallimento localizzazione forzata: {e}")
+            print(f"[RECOVERY] ✗ Forced localization failed: {e}")
             return False
 
     def _get_transform(self, from_wp, to_wp):
@@ -254,32 +254,32 @@ class RecordingInterface(object):
 
     def get_localization_state(self):
         """
-        Ottiene lo stato di localizzazione corrente del robot nel grafo.
+        Gets the current localization state of the robot in the graph.
 
-        Questo metodo restituisce informazioni dettagliate su:
-        - Se il robot è localizzato nel grafo
-        - A quale waypoint è localizzato
-        - La trasformazione tra waypoint e corpo del robot
-        - Il livello di confidenza della localizzazione
+        This method returns detailed information about:
+        - Whether the robot is localized in the graph
+        - Which waypoint it is localized to
+        - The transformation between waypoint and robot body
+        - The confidence level of the localization
 
         Returns:
-            dict: Dizionario con informazioni sulla localizzazione:
-                - 'is_localized': bool - True se il robot è localizzato
-                - 'waypoint_id': str - ID del waypoint corrente (se localizzato)
-                - 'waypoint_name': str - Nome del waypoint corrente (se disponibile)
-                - 'waypoint_tform_body': SE3Pose - Trasformazione waypoint->body
-                - 'localization_state': obj - Oggetto LocalizationState completo
-                - 'seed_tform_body': SE3Pose - Seed transform (se disponibile)
-                Oppure None se si verifica un errore
+            dict: Dictionary with localization information:
+                - 'is_localized': bool - True if robot is localized
+                - 'waypoint_id': str - ID of current waypoint (if localized)
+                - 'waypoint_name': str - Name of current waypoint (if available)
+                - 'waypoint_tform_body': SE3Pose - Waypoint->body transformation
+                - 'localization_state': obj - Complete LocalizationState object
+                - 'seed_tform_body': SE3Pose - Seed transform (if available)
+                Or None if an error occurs
 
         Example:
-            # Controlla se il robot è localizzato
+            # Check if robot is localized
             loc_state = recording.get_localization_state()
             if loc_state and loc_state['is_localized']:
-                print(f"Robot localizzato a: {loc_state['waypoint_name']}")
+                print(f"Robot localized at: {loc_state['waypoint_name']}")
                 print(f"Waypoint ID: {loc_state['waypoint_id']}")
             else:
-                print("Robot NON localizzato nel grafo")
+                print("Robot NOT localized in graph")
         """
         try:
             # Get localization state from GraphNav client
@@ -571,10 +571,10 @@ class RecordingInterface(object):
 
     def navigate_to_first_waypoint(self, robot_state_client):
         """
-        Naviga verso il primo waypoint (wp_0) in modalità standard.
-        Il robot arriverà vicino al punto e si fermerà con l'orientamento attuale.
+        Navigate to the first waypoint (wp_0) in standard mode.
+        The robot will arrive near the point and stop with its current orientation.
         """
-        # 1. Trova l'ID di wp_0
+        # 1. Find the ID of wp_0
         graph = self._get_graph()
         first_waypoint = None
         for waypoint in graph.waypoints:
@@ -604,18 +604,18 @@ class RecordingInterface(object):
                     travel_params=travel_params
                 )
             except Exception as e:
-                print(f"[RETURN] Errore invio comando: {e}")
+                print(f"[RETURN] Error sending command: {e}")
                 time.sleep(0.5)
                 continue
 
             time.sleep(0.5)
 
-            # Controlla feedback
+            # Check feedback
             try:
                 feedback = self._graph_nav_client.navigation_feedback(nav_to_cmd_id)
 
                 if feedback.status == graph_nav_pb2.NavigationFeedbackResponse.STATUS_REACHED_GOAL:
-                    print("[RETURN] ✓ Arrivato a wp_0.")
+                    print("[RETURN] ✓ Arrived at wp_0.")
                     return True
 
                 elif feedback.status == graph_nav_pb2.NavigationFeedbackResponse.STATUS_LOST:
@@ -627,11 +627,11 @@ class RecordingInterface(object):
                     return False
 
                 elif feedback.status == graph_nav_pb2.NavigationFeedbackResponse.STATUS_STUCK:
-                    print("[RETURN] ⚠️ Robot bloccato (STUCK).")
+                    print("[RETURN] ⚠️ Robot blocked (STUCK).")
                     return False
 
             except Exception as e:
-                print(f"[RETURN] Errore feedback: {e}")
+                print(f"[RETURN] Feedback error: {e}")
                 return False
 
         return False
@@ -654,8 +654,8 @@ class RecordingInterface(object):
         Get detailed information about waypoints in the current graph.
 
         Args:
-            only_manual: Se True, restituisce solo i waypoint manuali (formato 'wp_N').
-                        Se False, restituisce tutti i waypoint del grafo.
+            only_manual: If True, returns only manual waypoints (format 'wp_N').
+                        If False, returns all waypoints in the graph.
 
         Returns:
             list: List of dictionaries with waypoint details:
@@ -773,10 +773,10 @@ class RecordingInterface(object):
 
     def navigate_to_waypoint(self, waypoint_id, robot_state_client):
         """
-        Naviga a un waypoint. Se il robot si perde, tenta di forzare la localizzazione
-        sul waypoint target (assumendo di esserci vicino).
+        Navigate to a waypoint. If the robot gets lost, attempts to force localization
+        to the target waypoint (assuming being close to it).
         """
-        # Scarica il grafo per avere i nomi aggiornati
+        # Download graph to have updated names
         graph = self._get_graph()
         target_waypoint_name = "unknown"
         for wp in graph.waypoints:
@@ -801,7 +801,7 @@ class RecordingInterface(object):
                     travel_params=travel_params
                 )
             except Exception as e:
-                print(f"[NAV] Errore invio comando: {e}")
+                print(f"[NAV] Error sending command: {e}")
                 break
 
             time.sleep(0.5)
@@ -810,30 +810,30 @@ class RecordingInterface(object):
                 feedback = self._graph_nav_client.navigation_feedback(nav_to_cmd_id)
 
                 if feedback.status == graph_nav_pb2.NavigationFeedbackResponse.STATUS_REACHED_GOAL:
-                    print(f"[NAV] ✓ Arrivato a {target_waypoint_name}")
+                    print(f"[NAV] ✓ Arrived at {target_waypoint_name}")
                     return True
 
                 elif feedback.status == graph_nav_pb2.NavigationFeedbackResponse.STATUS_LOST:
-                    print(f"[NAV]️ STATUS_LOST rilevato durante la navigazione!")
+                    print(f"[NAV]️ STATUS_LOST detected during navigation!")
 
-                    # --- LOGICA DI RECUPERO ---
-                    print(f"[NAV] Tento di forzare la localizzazione su {target_waypoint_name}...")
+                    # --- RECOVERY LOGIC ---
+                    print(f"[NAV] Attempting to force localization at {target_waypoint_name}...")
                     recovered = self.force_localization_to_waypoint(robot_state_client, waypoint_id)
 
                     if recovered:
-                        print(f"[NAV] Recupero riuscito. Considero il robot arrivato (o pronto per riprovare).")
-                        # Opzione: Ritorna True perché ci siamo localizzati "sopra"
+                        print(f"[NAV] Recovery successful. Consider robot arrived (or ready to retry).")
+                        # Option: Return True because we localized "on top"
                         return True
                     else:
-                        print(f"[NAV] ✗ Recupero fallito. Robot perso definitivamente.")
+                        print(f"[NAV] ✗ Recovery failed. Robot definitively lost.")
                         return False
 
                 elif feedback.status == graph_nav_pb2.NavigationFeedbackResponse.STATUS_STUCK:
-                    print(f"[NAV]️ Robot STUCK (bloccato).")
+                    print(f"[NAV]️ Robot STUCK (blocked).")
                     return False
 
             except Exception as e:
-                print(f"[NAV] Errore feedback: {e}")
+                print(f"[NAV] Feedback error: {e}")
                 return False
 
         return False
@@ -1134,10 +1134,10 @@ class RecordingInterface(object):
         Verify that edges exist between consecutive waypoints in the path.
         Returns list of missing edges that need to be created.
 
-        IMPORTANTE: Questa funzione considera anche i waypoint automatici, MA solo
-        quelli che sono INTERNI alle due celle consecutive considerate.
-        Se esiste già un percorso tra due waypoint manuali tramite waypoint
-        automatici interni alle celle, non viene creato un nuovo arco.
+        IMPORTANT: This function also considers automatic waypoints, BUT only
+        those that are INTERNAL to the two consecutive cells being considered.
+        If a path already exists between two manual waypoints via automatic
+        waypoints internal to the cells, a new edge is not created.
 
         Args:
             cell_path: List of (row, col) cells in order
@@ -1359,13 +1359,13 @@ class RecordingInterface(object):
         4. Creates missing edges if requested
         5. Returns the optimized path
 
-        IMPORTANTE: Se la cella target NON ha un waypoint, trova il waypoint
-        più vicino (adiacente) alla cella target e restituisce il path fino a quello.
+        IMPORTANT: If the target cell does NOT have a waypoint, finds the nearest
+        (adjacent) waypoint to the target cell and returns the path to it.
 
-        IMPORTANTE: Per ogni coppia di celle consecutive nel percorso, controlla se
-        esiste un arco diretto tra i waypoint manuali OPPURE un percorso che passa
-        per waypoint automatici che sono INTERNI alle due celle considerate.
-        Se non esiste nessun percorso valido, crea un nuovo arco diretto.
+        IMPORTANT: For each pair of consecutive cells in the path, checks if
+        a direct edge exists between manual waypoints OR a path that goes through
+        automatic waypoints that are INTERNAL to the two cells being considered.
+        If no valid path exists, creates a new direct edge.
 
         Args:
             start_cell: (row, col) starting cell

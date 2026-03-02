@@ -669,8 +669,6 @@ def find_new_borders(env, robot_row, robot_col, path, frontier):
                 new_borders_cells.append(new_border)
     return new_borders_cells
 
-#TODO: try to use EXTENT local grid (it's a total mess)
-
 def easy_walk(options):
     robot, lease_client, robot_state_client, client_metadata = spotLogInUtils.setLogInfo(options)
 
@@ -792,7 +790,7 @@ def easy_walk(options):
                 if lowest_rank_cell is not None:
                     target_row, target_col, rank = lowest_rank_cell
 
-                    print(f"\n[TARGET] Cella con rank più basso: ({target_row},{target_col}) rank={rank}")
+                    print(f"\n[TARGET] Cell with lowest rank: ({target_row},{target_col}) rank={rank}")
 
                     # Get current position
                     x_current, y_current, _, _ = spotUtils.getPosition(robot_state_client)
@@ -841,23 +839,23 @@ def easy_walk(options):
                         # Get waypoints by cell for navigation
                         waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
 
-                        # Verifica se l'ultima cella nel path è la cella target
+                        # Check if the last cell in the path is the target cell
                         waypoints_to_navigate = path_result['waypoint_names'][1:]  # Skip first (already there)
 
-                        # Se l'ultimo waypoint è nella cella target, non dobbiamo navigarci
-                        # ma fermarci al waypoint precedente
+                        # If the last waypoint is in the target cell, we don't need to navigate to it
+                        # but stop at the previous waypoint
                         last_cell_in_path = path_result['cell_path'][-1] if path_result['cell_path'] else None
 
                         if last_cell_in_path == (target_row, target_col) and len(waypoints_to_navigate) > 1:
-                            # L'ultimo waypoint è nella cella target - fermati al penultimo
+                            # Last waypoint is in target cell - stop at the previous one
                             waypoints_to_navigate = waypoints_to_navigate[:-1]
                             print(f"[NAV] Target cell has waypoint - stopping at previous waypoint")
                         elif last_cell_in_path == (target_row, target_col) and len(waypoints_to_navigate) == 1:
-                            # C'è solo un waypoint ed è nella cella target - non navigare, siamo già vicini
+                            # There's only one waypoint and it's in the target cell - don't navigate, we're already close
                             waypoints_to_navigate = []
                             print(f"[NAV] Target cell is adjacent - no navigation needed, attempting direct entry")
 
-                        # Navigate through waypoints (fermarsi PRIMA della cella target)
+                        # Navigate through waypoints (stop BEFORE target cell)
                         navigation_success = True
                         for i, waypoint_name in enumerate(waypoints_to_navigate, 1):
                             print(f"\n[NAV] Step {i}/{len(waypoints_to_navigate)}: Navigating to {waypoint_name}")
@@ -904,7 +902,7 @@ def easy_walk(options):
                                 recordingInterface.create_default_waypoint(cell_row=target_row, cell_col=target_col)
                                 env.add_waypoint(x_final, y_final)
 
-                                # Mark cell as visited (IMPORTANTE!)
+                                # Mark cell as visited (IMPORTANT!)
                                 env.mark_cell_visited(target_row, target_col)
 
                                 # Remove from frontier
@@ -921,13 +919,13 @@ def easy_walk(options):
                                 print(f"[ERROR] Could not enter cell ({target_row},{target_col}) after navigating optimized path")
                         else:
                             print(f"[ERROR] Navigation failed along optimized path")
-                            # IMPORTANTE: Riprendi la registrazione anche in caso di fallimento
+                            # IMPORTANT: Resume recording even in case of failure
                             recordingInterface.start_recording()
                             # Remove from frontier
                             frontier.remove((target_row, target_col, rank))
                     else:
                         print(f"[ERROR] No path found to cell ({target_row},{target_col})")
-                        # IMPORTANTE: Riprendi la registrazione anche in caso di fallimento
+                        # IMPORTANT: Resume recording even in case of failure
                         recordingInterface.start_recording()
                         # Remove from frontier - unreachable
                         frontier.remove((target_row, target_col, rank))
@@ -999,7 +997,7 @@ def easy_walk(options):
         recordingInterface.download_full_graph()
         estop.stop()
 
-# FIXME Change hostname for Jetson/localhost ma tanto è rotta
+# FIXME Change hostname for Jetson/localhost but anyway it's broken
 def main():
     # Instead of argparse, create an options object manually
     options = SimpleNamespace()
