@@ -191,7 +191,7 @@ def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cell
         tuple: (best_x, best_y, valid_samples, rejected_samples) or (None, None, [], []) if no valid point found
     """
     # Sample random points in the cell
-    sampled_points = sample_cell_points(env, cell_row, cell_col, num_samples=20)
+    sampled_points = sample_cell_points(env, cell_row, cell_col, num_samples=50)
 
     if not sampled_points:
         return None, None, [], []
@@ -645,7 +645,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
         # Wait for movement to complete
         time.sleep(0.5)
 
-        # VERIFICA: Controlla se il robot è effettivamente nella cella target
+        # VERIFY: Check if the robot is actually in the target cell
         x_final, y_final, z_final, _ = spotUtils.getPosition(robot_state_client)
         check_position_in_cell = env.is_point_in_cell(x_final, y_final, target_row, target_col)
 
@@ -669,7 +669,7 @@ def find_new_borders(env, robot_row, robot_col, path, frontier):
                 new_borders_cells.append(new_border)
     return new_borders_cells
 
-#TODO: try to use EXTENT local grid(è una cagata pazzesca)
+#TODO: try to use EXTENT local grid (it's a total mess)
 
 def easy_walk(options):
     robot, lease_client, robot_state_client, client_metadata = spotLogInUtils.setLogInfo(options)
@@ -769,9 +769,9 @@ def easy_walk(options):
                     borders_in_frontier.append(border)
 
             if len(borders_in_frontier) != 0:
-                # Seleziona il border con rank più basso (index 2 della tupla)
+                # Select the border with the lowest rank (index 2 of the tuple)
                 selected_border = min(borders_in_frontier, key=lambda b: b[2])
-                print(f"[BORDER] Selezionato border con rank minore: ({selected_border[0]},{selected_border[1]}) rank={selected_border[2]}")
+                print(f"[BORDER] Selected border with lowest rank: ({selected_border[0]},{selected_border[1]}) rank={selected_border[2]}")
 
                 check = attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client, env, selected_border[0], selected_border[1], mission_folder, visualization_counter, recordingInterface)
                 visualization_counter += 1
