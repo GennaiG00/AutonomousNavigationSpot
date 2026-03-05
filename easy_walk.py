@@ -358,17 +358,14 @@ def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
                     world_corners.append((wx, wy))
 
                 # Draw cell
-                cell_status, _ = env.get_cell_status(row, col)
+                cell_status = env.get_cell_status(row, col)
                 if cell_status == 1:
-                    # Visited - green fill
                     rect = patches.Polygon(world_corners, linewidth=2, edgecolor='darkgreen',
                                           facecolor='lightgreen', alpha=0.3, zorder=2)
                 elif cell_status == -1:
-                    # Blocked - red fill
                     rect = patches.Polygon(world_corners, linewidth=2, edgecolor='darkred',
                                           facecolor='lightcoral', alpha=0.4, zorder=2)
                 else:
-                    # Unvisited - gray outline only
                     rect = patches.Polygon(world_corners, linewidth=1.5, edgecolor='gray',
                                           facecolor='none', alpha=0.6, linestyle='--', zorder=2)
                 ax.add_patch(rect)
@@ -377,11 +374,6 @@ def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
                 ax.text(cell_x, cell_y, f'{row},{col}', ha='center', va='center',
                        fontsize=7, color='black', weight='bold', zorder=3,
                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
-
-                # Draw explored sides as RED LINES on cell borders
-                cell_status, sides_status = env.get_cell_status(row, col)
-                if cell_status != 1 and sides_status != 0b0000:  # Show for unvisited and blocked cells
-                    draw_explored_sides(ax, cell_x, cell_y, half_size, sides_status, cos_yaw, sin_yaw)
 
     # Plot rejected candidates (red X)
     if 'rejected' in candidates:
@@ -518,6 +510,192 @@ def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
 
     plt.pause(0.5)
     plt.close()
+
+    # ------------------------------------------------------------------ #
+    # SECOND FIGURE: global map with ACCUMULATED local scans overlaid    #
+    # ------------------------------------------------------------------ #
+    if env is not None:
+        # ---- Merge current scan into the persistent accumulated map -----
+        # env._accumulated_pts: dict (ix, iy) -> [R, G, B]  (0-255 integers)
+        # Points are quantised to ACCUM_RES metres so nearby pts merge.
+        ACCUM_RES = 0.05  # metres per accumulated pixel
+
+        if not hasattr(env, '_accumulated_pts'):
+            env._accumulated_pts = {}
+
+        for pt_idx in range(len(pts)):
+            px_w, py_w = float(pts[pt_idx, 0]), float(pts[pt_idx, 1])
+            r_new = int(colors_norm[pt_idx, 0] * 255)
+            g_new = int(colors_norm[pt_idx, 1] * 255) if colors_norm.shape[1] > 1 else 0
+            b_new = int(colors_norm[pt_idx, 2] * 255) if colors_norm.shape[1] > 2 else 0
+            key = (round(px_w / ACCUM_RES), round(py_w / ACCUM_RES))
+
+            if key not in env._accumulated_pts:
+                env._accumulated_pts[key] = [r_new, g_new, b_new]
+            else:
+                # Blue channel > 0  →  free/steppable pixel: blue always wins
+                if b_new > 0:
+                    env._accumulated_pts[key] = [r_new, g_new, b_new]
+                # Red (obstacle) only stays if the slot was empty (already handled above)
+
+        # ---- Build numpy arrays from the accumulated dict ---------------
+        if env._accumulated_pts:
+            accum_keys   = np.array(list(env._accumulated_pts.keys()),   dtype=np.float32)
+            accum_wx     = accum_keys[:, 0] * ACCUM_RES
+            accum_wy     = accum_keys[:, 1] * ACCUM_RES
+            accum_colors = np.array(list(env._accumulated_pts.values()), dtype=np.float32) / 255.0
+        else:
+            accum_wx     = np.array([robot_x], dtype=np.float32)
+            accum_wy     = np.array([robot_y], dtype=np.float32)
+            accum_colors = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+
+        fig2, ax2 = plt.subplots(figsize=(18, 14))
+
+        # --- plot ACCUMULATED local grid (all past scans merged) ---------
+        ax2.scatter(accum_wx, accum_wy, c=accum_colors, s=2, alpha=0.6,
+                    label='Accumulated Local Grid')
+
+        cos_yaw = np.cos(env.origin_yaw)
+        sin_yaw = np.sin(env.origin_yaw)
+
+        # --- draw ALL global grid cells (no bounds clipping) -------------
+        for row in range(env.rows):
+            for col in range(env.cols):
+                world_pos = env.get_world_position_from_cell(row, col)
+                if world_pos is None:
+                    continue
+                cell_x, cell_y = world_pos
+                half_size = env.cell_size / 2.0
+
+                # cell_x/cell_y is already in the world frame —
+                # do NOT rotate corner offsets again.
+                world_corners = [
+                    (cell_x - half_size, cell_y - half_size),
+                    (cell_x + half_size, cell_y - half_size),
+                    (cell_x + half_size, cell_y + half_size),
+                    (cell_x - half_size, cell_y + half_size),
+                ]
+
+                cell_status, sides_status = env.get_cell_status(row, col)
+                if cell_status == 1:
+                    rect = patches.Polygon(world_corners, linewidth=2, edgecolor='darkgreen',
+                                           facecolor='lightgreen', alpha=0.3, zorder=2)
+                elif cell_status == -1:
+                    rect = patches.Polygon(world_corners, linewidth=2, edgecolor='darkred',
+                                           facecolor='lightcoral', alpha=0.4, zorder=2)
+                else:
+                    rect = patches.Polygon(world_corners, linewidth=1.5, edgecolor='gray',
+                                           facecolor='none', alpha=0.6, linestyle='--', zorder=2)
+                ax2.add_patch(rect)
+
+                ax2.text(cell_x, cell_y, f'{row},{col}', ha='center', va='center',
+                         fontsize=7, color='black', weight='bold', zorder=3,
+                         bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
+
+                if cell_status != 1 and sides_status != 0b0000:
+                    draw_explored_sides(ax2, cell_x, cell_y, half_size, sides_status, cos_yaw, sin_yaw)
+
+        # --- rejected candidates ---
+        if 'rejected' in candidates:
+            for point in candidates['rejected']:
+                ax2.plot(point[0], point[1], 'rx', markersize=10, markeredgewidth=2.5, zorder=5)
+
+        # --- valid candidates ---
+        if 'valid' in candidates:
+            for point in candidates['valid']:
+                ax2.plot(point[0], point[1], 'yo', markersize=10, markerfacecolor='yellow',
+                         markeredgewidth=2, markeredgecolor='orange', zorder=5)
+
+        # --- chosen point ---
+        if chosen_point is not None:
+            ax2.plot(chosen_point[0], chosen_point[1], 'g*', markersize=25,
+                     markeredgewidth=2, label='Target', zorder=6)
+            target_dist = np.sqrt((chosen_point[0] - robot_x)**2 + (chosen_point[1] - robot_y)**2)
+            ax2.plot([robot_x, chosen_point[0]], [robot_y, chosen_point[1]],
+                     'g--', linewidth=2.5, alpha=0.8, zorder=4)
+            mid_x = (robot_x + chosen_point[0]) / 2
+            mid_y = (robot_y + chosen_point[1]) / 2
+            ax2.text(mid_x, mid_y, f'{target_dist:.2f}m', fontsize=9, color='darkgreen',
+                     weight='bold', zorder=6,
+                     bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen',
+                               alpha=0.9, edgecolor='darkgreen'))
+
+        # --- waypoints (all, not clipped) ---
+        if env is not None and hasattr(env, 'waypoints') and isinstance(env.waypoints, list) and len(env.waypoints) > 0:
+            for i, waypoint in enumerate(env.waypoints):
+                if not isinstance(waypoint, (tuple, list)) or len(waypoint) < 2:
+                    continue
+                wp_x, wp_y = waypoint[0], waypoint[1]
+                ax2.plot(wp_x, wp_y, 'mo', markersize=12, markerfacecolor='magenta',
+                         markeredgewidth=2.5, markeredgecolor='purple', zorder=7,
+                         label='Waypoints' if i == 0 else '')
+                ax2.text(wp_x + 0.12, wp_y + 0.12, f'W{i+1}', fontsize=9, color='purple',
+                         weight='bold', zorder=8,
+                         bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                                   alpha=0.9, edgecolor='purple'))
+
+        # --- robot path traces (all, not clipped) ---
+        if env is not None and hasattr(env, 'robot_path') and isinstance(env.robot_path, list) and len(env.robot_path) > 0:
+            all_pos_global = []
+            for entry in env.robot_path:
+                if not isinstance(entry, (tuple, list)) or len(entry) < 2:
+                    continue
+                px, py = entry[0], entry[1]
+                mt = entry[2] if len(entry) >= 3 else 'explore'
+                all_pos_global.append((px, py, mt))
+
+            for i in range(len(all_pos_global) - 1):
+                p1, p2 = all_pos_global[i], all_pos_global[i + 1]
+                if p1[2] == 'navigate' or p2[2] == 'navigate':
+                    ax2.plot([p1[0], p2[0]], [p1[1], p2[1]],
+                             'r--', linewidth=2.5, alpha=0.7, zorder=4,
+                             label='Navigation' if i == 0 and p1[2] == 'navigate' else '')
+                else:
+                    ax2.plot([p1[0], p2[0]], [p1[1], p2[1]],
+                             'g-', linewidth=2.5, alpha=0.7, zorder=4,
+                             label='Exploration' if i == 0 else '')
+
+            for px, py, mt in all_pos_global:
+                color_marker = 'orange' if mt == 'navigate' else 'lime'
+                ax2.plot(px, py, 'o', color=color_marker, markersize=5, alpha=0.8, zorder=5)
+
+        # --- robot position ---
+        ax2.plot(robot_x, robot_y, 'bo', markersize=18, label='Robot', zorder=7)
+        for r in [1.0, 2.0]:
+            circle2 = patches.Circle((robot_x, robot_y), r, fill=False,
+                                     linestyle=':', linewidth=1,
+                                     edgecolor='blue', alpha=0.3, zorder=1)
+            ax2.add_patch(circle2)
+
+        # Draw a rectangle showing the CURRENT local scan extent
+        rect_local = patches.Rectangle(
+            (local_x_min, local_y_min),
+            local_x_max - local_x_min,
+            local_y_max - local_y_min,
+            linewidth=2, edgecolor='cyan', facecolor='none',
+            linestyle='-', alpha=0.8, zorder=6, label='Current local scan'
+        )
+        ax2.add_patch(rect_local)
+
+        ax2.set_xlabel('X [m] (VISION)', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Y [m] (VISION)', fontsize=12, fontweight='bold')
+        ax2.set_title(
+            f'Iteration {iteration}: Global Map View (accumulated local scans)',
+            fontsize=13, fontweight='bold'
+        )
+        ax2.axis('equal')
+        ax2.grid(True, alpha=0.3)
+        ax2.legend(loc='upper right', fontsize=10)
+        plt.tight_layout()
+
+        if save_path:
+            base, ext = os.path.splitext(save_path)
+            global_save_path = f"{base}_global{ext}"
+            fig2.savefig(global_save_path, dpi=150, bbox_inches='tight')
+            print(f"[VISUALIZATION] Global map saved to: {global_save_path}")
+
+        plt.pause(0.5)
+        plt.close(fig2)
 
 
 def attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client,
@@ -682,7 +860,7 @@ def easy_walk(options):
         command_client = robot.ensure_client(RobotCommandClient.default_service_name)
         local_grid_client = robot.ensure_client(LocalGridClient.default_service_name)
         robot.time_sync.wait_for_sync()
-        robot.logger.info('Powering on robot... This may take several seconds.')
+        robot.logger.info('Powering on robot...')
         robot.power_on()
         assert robot.is_powered_on(), 'Robot power on failed.'
         robot.logger.info('Robot powered on.')
@@ -703,20 +881,21 @@ def easy_walk(options):
         # Create first waypoint in initial cell (0, 0)
         recordingInterface.create_default_waypoint(cell_row=0, cell_col=0)
 
-        env = environmentMap.EnvironmentMap(rows=4, cols=15, cell_size=1.5)
+        env = environmentMap.EnvironmentMap(rows=5, cols=22, cell_size=1.5)
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
 
         yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y),
-                              1.0 - 2.0 * (quat_boot.y**2 + quat_boot.z**2))
+                              1.0 - 2.0 * (quat_boot.y ** 2 + quat_boot.z ** 2))
 
-        # Set origin with position AND orientation
-        env.set_origin(x_boot, y_boot, yaw_boot, start_row=0, start_col=0)
+        # Arrotondiamo lo yaw al multiplo di 90° (pi/2) più vicino.
+        # Mantiene i quadrati dritti sul grafico, ma fa espandere la griglia in avanti rispetto al robot.
+        snapped_yaw = round(yaw_boot / (np.pi / 2.0)) * (np.pi / 2.0)
 
-        # Register initial waypoint
-        env.add_waypoint(x_boot, y_boot)
+        env.set_origin(x_boot, y_boot, snapped_yaw, start_row=0, start_col=0)
 
         print(f'[INIT] Boot position: x={x_boot:.3f}, y={y_boot:.3f}, z={z_boot:.3f}')
-        print(f'[INIT] Boot orientation: yaw={np.rad2deg(yaw_boot):.1f}°')
+        print(
+            f'[INIT] Boot orientation: reale {np.rad2deg(yaw_boot):.1f}° -> allineata alla griglia: {np.rad2deg(snapped_yaw):.1f}°')
 
 
         mission_timestamp = datetime.now().strftime("Mission_%d-%m-%Y_%H-%M-%S")
