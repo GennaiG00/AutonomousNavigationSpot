@@ -69,33 +69,32 @@ def find_nearest_waypoint_to_cell(env, target_cell, recording_interface):
     return nearest_waypoint_id
 
 
-def navigate_to_cell_via_waypoint(local_grid_client, robot_state_client, command_client,
-                                   env, recording_interface, target_cell):
-    """
-    Navigate to a cell by first going to the nearest waypoint, then moving to the cell.
-
-    Returns:
-        tuple: (success: bool, target_cell: tuple)
-    """
-    print(f"\n[NAV] Navigating to cell {target_cell} via waypoint...")
-
-    waypoint_id = find_nearest_waypoint_to_cell(env, target_cell, recording_interface)
-    if waypoint_id is None:
-        print("[ERROR] No waypoints available for navigation")
-        return False, target_cell
-
-    # Navigate to that waypoint using graph_nav
-    print(f"[NAV] Step 1: Navigating to waypoint {waypoint_id}...")
-    nav_success = recording_interface.navigate_to_waypoint(waypoint_id)
-
-    if not nav_success:
-        print(f"[ERROR] Failed to navigate to waypoint {waypoint_id}")
-        return False, target_cell
-
-    print(f"[OK] Reached waypoint {waypoint_id}")
-    time.sleep(0.5)
-
-    return True, target_cell
+# def navigate_to_cell_via_waypoint(env, recording_interface, target_cell):
+#     """
+#     Navigate to a cell by first going to the nearest waypoint, then moving to the cell.
+#
+#     Returns:
+#         tuple: (success: bool, target_cell: tuple)
+#     """
+#     print(f"\n[NAV] Navigating to cell {target_cell} via waypoint...")
+#
+#     waypoint_id = find_nearest_waypoint_to_cell(env, target_cell, recording_interface)
+#     if waypoint_id is None:
+#         print("[ERROR] No waypoints available for navigation")
+#         return False, target_cell
+#
+#     # Navigate to that waypoint using graph_nav
+#     print(f"[NAV] Step 1: Navigating to waypoint {waypoint_id}...")
+#     nav_success = recording_interface.navigate_to_waypoint(waypoint_id)
+#
+#     if not nav_success:
+#         print(f"[ERROR] Failed to navigate to waypoint {waypoint_id}")
+#         return False, target_cell
+#
+#     print(f"[OK] Reached waypoint {waypoint_id}")
+#     time.sleep(0.5)
+#
+#     return True, target_cell
 
 def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0):
     """
@@ -132,7 +131,7 @@ def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0):
     return True  # Path clear
 
 
-def sample_cell_points(env, cell_row, cell_col, num_samples=20):
+def sample_cell_points(env, cell_row, cell_col, num_samples=200):
     """
     Sample random points within a cell.
 

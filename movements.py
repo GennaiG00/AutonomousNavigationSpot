@@ -1,9 +1,11 @@
 import time
 import numpy as np
+from bosdyn.api.spot.robot_command_pb2 import ObstacleParams
 from bosdyn.client.frame_helpers import *
 from bosdyn.client.robot_command import RobotCommandBuilder
 from bosdyn.api.basic_command_pb2 import RobotCommandFeedbackStatus
 from bosdyn.client import math_helpers
+from bosdyn.api.spot import robot_command_pb2 as spot_command_pb2
 
 def relative_move(dx, dy, dyaw, frame_name, robot_command_client, robot_state_client, stairs=False):
     """Move the robot relative to its current pose.
@@ -26,9 +28,13 @@ def relative_move(dx, dy, dyaw, frame_name, robot_command_client, robot_state_cl
     out_tform_goal = out_tform_body * body_tform_goal
 
     # Command the robot to go to the goal point in the specified frame.
+
+    obstacle_params = spot_command_pb2.ObstacleParams(disable_vision_foot_obstacle_avoidance=True)
+    mobility_params = spot_command_pb2.MobilityParams(obstacle_params=obstacle_params)
+
     robot_cmd = RobotCommandBuilder.synchro_se2_trajectory_point_command(
         goal_x=out_tform_goal.x, goal_y=out_tform_goal.y, goal_heading=out_tform_goal.angle,
-        frame_name=frame_name, params=RobotCommandBuilder.mobility_params(stair_hint=stairs))
+        frame_name=frame_name, params=mobility_params)
     end_time = 6000.0
     cmd_id = robot_command_client.robot_command(lease=None, command=robot_cmd,
                                                 end_time_secs=time.time() + end_time)
