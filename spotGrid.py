@@ -47,6 +47,70 @@ def create_vtk_no_step_grid(proto, robot_state_client):
 
     return pts, cells_no_step, color
 
+
+def create_vtk_obstacle_grid(proto, robot_state_client):
+    """Generate points, cell values and colors for the obstacle distance grid.
+
+    The obstacle_distance grid encodes the signed distance (in metres) from each
+    cell to the nearest detected obstacle:
+        dist < 0   -> strictly inside an obstacle  → blocked  (red)
+        dist >= 0  -> border or free space          → passable (blue)
+
+    Zero-padding policy: no safety margin is added around obstacles.
+    A cell is passable as soon as its distance is >= 0.
+    Unlike the no_step grid, grass is NOT classified as an obstacle here,
+    making this grid more suitable for outdoor environments.
+
+    Returns:
+        pts (np.ndarray, shape (N,3)): cell positions in the VISION frame
+        cells_obstacle_dist (np.ndarray, shape (N,)): raw signed-distance values
+        color (np.ndarray, shape (N,3) uint8): RGB colours per cell
+    """
+    local_grid_proto = None
+    cell_size = 0.0
+    for local_grid_found in proto:
+        if local_grid_found.local_grid_type_name == 'obstacle_distance':
+            local_grid_proto = local_grid_found
+            cell_size = local_grid_found.local_grid.extent.cell_size
+
+    # If no relevant local grid found, return empty arrays (caller can handle)
+    if local_grid_proto is None:
+        return np.empty((0, 3), dtype=np.float32), np.array([], dtype=np.float32), np.zeros((0, 3), dtype=np.uint8)
+
+    # Unpack the raw distance values.
+    cells_obstacle_dist = unpack_grid(local_grid_proto).astype(np.float32)
+
+    # Build (x, y) grid coordinates.
+    ys, xs = np.mgrid[0:local_grid_proto.local_grid.extent.num_cells_x,
+                      0:local_grid_proto.local_grid.extent.num_cells_y]
+
+    # Use ground-plane height for the z coordinate.
+    transforms_snapshot = local_grid_proto.local_grid.transforms_snapshot
+    z_ground_in_vision_frame = compute_ground_height_in_vision_frame(robot_state_client)
+    cell_count = local_grid_proto.local_grid.extent.num_cells_x * local_grid_proto.local_grid.extent.num_cells_y
+    z = np.ones(cell_count, dtype=np.float32) * z_ground_in_vision_frame
+
+    pts = np.vstack([np.ravel(xs).astype(np.float32),
+                     np.ravel(ys).astype(np.float32), z]).T
+    pts[:, [0, 1]] *= (local_grid_proto.local_grid.extent.cell_size,
+                       local_grid_proto.local_grid.extent.cell_size)
+
+    # Colour coding (zero-padding – no border zone):
+    #   red  -> strictly inside obstacle  (dist < 0)
+    #   blue -> passable: border or free  (dist >= 0)
+    color = np.zeros([cell_count, 3], dtype=np.uint8)
+    color[:, 0] = (cells_obstacle_dist < 0.0)   # red  = blocked
+    color[:, 2] = (cells_obstacle_dist >= 0.0)  # blue = passable
+    color *= 255
+
+    # Offset to VISION frame.
+    vision_tform_local_grid = get_a_tform_b(transforms_snapshot, VISION_FRAME_NAME,
+                                            local_grid_proto.local_grid.frame_name_local_grid_data)
+    pts = offset_grid_pixels(pts, vision_tform_local_grid, cell_size)
+
+    return pts, cells_obstacle_dist, color
+
+
 def compute_ground_height_in_vision_frame(robot_state_client):
     """Get the z-height of the ground plane in vision frame from the current robot state."""
     robot_state = robot_state_client.get_robot_state()

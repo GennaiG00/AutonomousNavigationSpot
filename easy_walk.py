@@ -101,12 +101,18 @@ def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0):
     Check if there's a clear line of sight between two points.
     Uses sampling along the line to check for obstacles.
 
+    Uses the obstacle_distance grid where:
+        dist < 0   -> strictly inside an obstacle (blocked)
+        dist >= 0  -> border or free space (passable – zero padding)
+
     Args:
         x1, y1: Start coordinates (robot position)
         x2, y2: End coordinates (target point)
-        pts: Grid points array
-        cells: Grid cell values (<=0=obstacle, >0=free)
-        obstacle_threshold: Cell value below which it's considered blocked
+        pts: Grid points array from obstacle_distance grid
+        cells: obstacle_distance values per cell
+        obstacle_threshold: Cells with distance strictly less than this value are
+                            considered blocked.  Default 0.0 = zero padding (no
+                            safety margin around obstacles).
 
     Returns:
         bool: True if path is clear, False if blocked
@@ -124,8 +130,10 @@ def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0):
         distances = np.sqrt((pts[:, 0] - check_x)**2 + (pts[:, 1] - check_y)**2)
         nearest_idx = np.argmin(distances)
 
-        # Check if this point is an obstacle (cells_no_step <= 0 means obstacle)
-        if cells[nearest_idx] <= obstacle_threshold:
+        # Blocked only when strictly inside an obstacle (dist < threshold).
+        # With threshold=0.0 this gives zero padding: the obstacle border (dist=0)
+        # is already considered passable.
+        if cells[nearest_idx] < obstacle_threshold:
             return False  # Path blocked
 
     return True  # Path clear
@@ -175,7 +183,7 @@ def sample_cell_points(env, cell_row, cell_col, num_samples=200):
     return samples
 
 
-def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cells_no_step):
+def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cells_obstacle_dist):
     """
     Sample 20 random points in a cell and find the one with clear path that is closest to cell center.
 
@@ -184,7 +192,8 @@ def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cell
         env: EnvironmentMap instance
         cell_row, cell_col: Target cell coordinates
         pts: Grid points array from local grid
-        cells_no_step: Cell values from local grid
+        cells_obstacle_dist: Cell values from obstacle_distance grid
+                             (<=0 = inside obstacle, 0..0.33 = border, >=0.33 = free)
 
     Returns:
         tuple: (best_x, best_y, valid_samples, rejected_samples) or (None, None, [], []) if no valid point found
@@ -207,8 +216,8 @@ def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cell
 
     # Check each sampled point
     for sample_x, sample_y in sampled_points:
-        # Check if path is clear
-        if check_line_of_sight(robot_x, robot_y, sample_x, sample_y, pts, cells_no_step):
+        # Check if path is clear (obstacle_distance > 0 means outside obstacle)
+        if check_line_of_sight(robot_x, robot_y, sample_x, sample_y, pts, cells_obstacle_dist):
             valid_samples.append((sample_x, sample_y))
         else:
             rejected_samples.append((sample_x, sample_y))
@@ -294,10 +303,11 @@ def draw_explored_sides(ax, cell_x, cell_y, half_size, sides_status, cos_yaw, si
         ax.plot([ws_wx, we_wx], [ws_wy, we_wy], 'r-', linewidth=4, alpha=0.8, zorder=4)
 
 
-def visualize_grid_with_candidates(pts, cells_no_step, color, robot_x, robot_y,
+def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
                                    candidates, chosen_point, iteration, env=None, save_path=None):
     """
-    Visualize the no-step grid with sampled candidates and chosen point.
+    Visualize the obstacle-distance grid with sampled candidates and chosen point.
+    Zero-padding colour scheme: red = inside obstacle (dist<0), blue = passable (dist>=0).
     Optionally overlay global grid map (only cells visible within local grid bounds).
 
     Args:
@@ -725,19 +735,20 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
     """
     print(f"\n[ATTEMPT] Trying to enter cell ({target_row},{target_col}) from current position...")
 
-    # Get local grid to check obstacles
-    proto = local_grid_client.get_local_grids(['no_step'])
-    pts, cells_no_step, color = spotGrid.create_vtk_no_step_grid(proto, robot_state_client)
+    # Get local grid to check obstacles (obstacle_distance is better for outdoor/grass environments
+    # because the no_step grid incorrectly marks grass as an obstacle)
+    proto = local_grid_client.get_local_grids(['obstacle_distance'])
+    pts, cells_obstacle_dist, color = spotGrid.create_vtk_obstacle_grid(proto, robot_state_client)
 
     # Get grid proto
     local_grid_proto = None
     for local_grid_found in proto:
-        if local_grid_found.local_grid_type_name == 'no_step':
+        if local_grid_found.local_grid_type_name == 'obstacle_distance':
             local_grid_proto = local_grid_found
             break
 
     if local_grid_proto is None:
-        print("[ERROR] No 'no_step' grid found")
+        print("[ERROR] No 'obstacle_distance' grid found")
         return False
 
     transforms_snapshot = local_grid_proto.local_grid.transforms_snapshot
@@ -753,10 +764,10 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
     print(f"[INFO] Robot position: ({robot_x:.2f}, {robot_y:.2f})")
 
-    # Sample 20 random points in the target cell and find the best one with clear path
+    # Sample random points in the target cell and find the best one with clear path
     print(f"[INFO] Sampling 20 random points in cell ({target_row},{target_col})...")
     target_x, target_y, valid_samples, rejected_samples = find_best_point_in_cell(
-        robot_x, robot_y, env, target_row, target_col, pts, cells_no_step
+        robot_x, robot_y, env, target_row, target_col, pts, cells_obstacle_dist
     )
 
     if target_x is None or target_y is None:
@@ -764,7 +775,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
         # Visualize the blocked path
         visualize_grid_with_candidates(
-            pts, cells_no_step, color, robot_x, robot_y,
+            pts, cells_obstacle_dist, color, robot_x, robot_y,
             {'rejected': rejected_samples, 'valid': []},
             None, 0, env
         )
@@ -786,7 +797,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
         save_path = os.path.join(mission_folder, f"iteration_{iteration}_cell_{target_row}_{target_col}.png")
 
     visualize_grid_with_candidates(
-        pts, cells_no_step, color, robot_x, robot_y,
+        pts, cells_obstacle_dist, color, robot_x, robot_y,
         {'rejected': rejected_samples, 'valid': valid_samples},
         (target_x, target_y), iteration, env, save_path
     )
@@ -880,7 +891,7 @@ def easy_walk(options):
         # Create first waypoint in initial cell (0, 0)
         recordingInterface.create_default_waypoint(cell_row=0, cell_col=0)
 
-        env = environmentMap.EnvironmentMap(rows=5, cols=22, cell_size=1.5)
+        env = environmentMap.EnvironmentMap(rows=4, cols=4, cell_size=1.5)
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
 
         yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y),
