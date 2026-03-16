@@ -1071,15 +1071,18 @@ class RecordingInterface(object):
         waypoints_in_cells.add(to_waypoint_id)    # Always include destination
 
         for wp in graph.waypoints:
-            wp_x = wp.waypoint_tform_ko.position.x
-            wp_y = wp.waypoint_tform_ko.position.y
             wp_name = wp.annotations.name if wp.annotations.name else f"auto_{wp.id[:8]}"
             waypoint_names[wp.id] = wp_name
 
-            # Check if this waypoint is inside cell_from or cell_to
-            if (env_map.is_point_in_cell(wp_x, wp_y, cell_from[0], cell_from[1]) or
-                env_map.is_point_in_cell(wp_x, wp_y, cell_to[0], cell_to[1])):
-                waypoints_in_cells.add(wp.id)
+            # Sostituisci la lettura KO con la lettura VISION
+            if wp_name in self.waypoint_poses:
+                wp_x = self.waypoint_poses[wp_name]['x']
+                wp_y = self.waypoint_poses[wp_name]['y']
+
+                # Check if this waypoint is inside cell_from or cell_to
+                if (env_map.is_point_in_cell(wp_x, wp_y, cell_from[0], cell_from[1]) or
+                        env_map.is_point_in_cell(wp_x, wp_y, cell_to[0], cell_to[1])):
+                    waypoints_in_cells.add(wp.id)
 
         # Build adjacency list from edges (only for waypoints in the two cells)
         adjacency = {}

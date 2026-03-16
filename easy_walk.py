@@ -54,12 +54,16 @@ def find_nearest_waypoint_to_cell(env, target_cell, recording_interface):
     nearest_waypoint_id = None
 
     for wp in waypoints:
-        # Get waypoint position from graph
-        wp_x = wp.waypoint_tform_ko.position.x
-        wp_y = wp.waypoint_tform_ko.position.y
+        wp_name = wp.annotations.name
+
+        if wp_name in recording_interface.waypoint_poses:
+            wp_x = recording_interface.waypoint_poses[wp_name]['x']
+            wp_y = recording_interface.waypoint_poses[wp_name]['y']
+        else:
+            continue
 
         # Calculate distance
-        dist = np.sqrt((wp_x - target_x)**2 + (wp_y - target_y)**2)
+        dist = np.sqrt((wp_x - target_x) ** 2 + (wp_y - target_y) ** 2)
 
         if dist < min_distance:
             min_distance = dist
@@ -67,34 +71,6 @@ def find_nearest_waypoint_to_cell(env, target_cell, recording_interface):
 
     print(f"[NAV] Nearest waypoint to cell {target_cell}: {nearest_waypoint_id} (distance: {min_distance:.2f}m)")
     return nearest_waypoint_id
-
-
-# def navigate_to_cell_via_waypoint(env, recording_interface, target_cell):
-#     """
-#     Navigate to a cell by first going to the nearest waypoint, then moving to the cell.
-#
-#     Returns:
-#         tuple: (success: bool, target_cell: tuple)
-#     """
-#     print(f"\n[NAV] Navigating to cell {target_cell} via waypoint...")
-#
-#     waypoint_id = find_nearest_waypoint_to_cell(env, target_cell, recording_interface)
-#     if waypoint_id is None:
-#         print("[ERROR] No waypoints available for navigation")
-#         return False, target_cell
-#
-#     # Navigate to that waypoint using graph_nav
-#     print(f"[NAV] Step 1: Navigating to waypoint {waypoint_id}...")
-#     nav_success = recording_interface.navigate_to_waypoint(waypoint_id)
-#
-#     if not nav_success:
-#         print(f"[ERROR] Failed to navigate to waypoint {waypoint_id}")
-#         return False, target_cell
-#
-#     print(f"[OK] Reached waypoint {waypoint_id}")
-#     time.sleep(0.5)
-#
-#     return True, target_cell
 
 def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0):
     """
@@ -217,7 +193,7 @@ def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cell
     # Check each sampled point
     for sample_x, sample_y in sampled_points:
         # Check if path is clear (obstacle_distance > 0 means outside obstacle)
-        if check_line_of_sight(robot_x, robot_y, sample_x, sample_y, pts, cells_obstacle_dist):
+        if check_line_of_sight(robot_x, robot_y, sample_x, sample_y, pts, cells_obstacle_dist, obstacle_threshold=0.33):
             valid_samples.append((sample_x, sample_y))
         else:
             rejected_samples.append((sample_x, sample_y))
@@ -307,7 +283,10 @@ def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, rob
                                    candidates, chosen_point, iteration, env=None, save_path=None):
     """
     Visualize the obstacle-distance grid with sampled candidates and chosen point.
-    Zero-padding colour scheme: red = inside obstacle (dist<0), blue = passable (dist>=0).
+    Color scheme from obstacle_distance:
+      - red:   dist < 0.0 (inside obstacle)
+      - green: 0.0 <= dist < 0.33 (padding region)
+      - blue:  dist >= 0.33 (free/passable)
     Optionally overlay global grid map (only cells visible within local grid bounds).
 
     Args:
@@ -318,11 +297,18 @@ def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, rob
 
     fig, ax = plt.subplots(figsize=(14, 12))
 
-    # Plot local grid points
+    # Plot local grid points with explicit obstacle/padding/free classes.
     x = pts[:, 0]
     y = pts[:, 1]
-    colors_norm = color.astype(np.float32) / 255.0
-    ax.scatter(x, y, c=colors_norm, s=2, alpha=0.4, label='Local Grid (obstacles)')
+    PADDING_THRESHOLD = 0.33
+    colors_norm = np.zeros((len(cells_obstacle_dist), 3), dtype=np.float32)
+    obstacle_mask = cells_obstacle_dist < 0.0
+    padding_mask = (cells_obstacle_dist >= 0.0) & (cells_obstacle_dist < PADDING_THRESHOLD)
+    free_mask = cells_obstacle_dist >= PADDING_THRESHOLD
+    colors_norm[obstacle_mask] = [1.0, 0.0, 0.0]  # red
+    colors_norm[padding_mask] = [0.0, 1.0, 0.0]   # green
+    colors_norm[free_mask] = [0.0, 0.0, 1.0]      # blue
+    ax.scatter(x, y, c=colors_norm, s=2, alpha=0.4, label='Local Grid (obstacle/padding/free)')
 
     # Calculate local grid bounds
     local_x_min, local_x_max = x.min(), x.max()
@@ -535,17 +521,19 @@ def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, rob
         for pt_idx in range(len(pts)):
             px_w, py_w = float(pts[pt_idx, 0]), float(pts[pt_idx, 1])
             r_new = int(colors_norm[pt_idx, 0] * 255)
-            g_new = int(colors_norm[pt_idx, 1] * 255) if colors_norm.shape[1] > 1 else 0
-            b_new = int(colors_norm[pt_idx, 2] * 255) if colors_norm.shape[1] > 2 else 0
+            g_new = int(colors_norm[pt_idx, 1] * 255)
+            b_new = int(colors_norm[pt_idx, 2] * 255)
             key = (round(px_w / ACCUM_RES), round(py_w / ACCUM_RES))
 
             if key not in env._accumulated_pts:
                 env._accumulated_pts[key] = [r_new, g_new, b_new]
             else:
-                # Blue channel > 0  →  free/steppable pixel: blue always wins
-                if b_new > 0:
+                # Keep the most permissive class when samples overlap.
+                old_r, old_g, old_b = env._accumulated_pts[key]
+                old_class = 2 if old_b > 0 else (1 if old_g > 0 else 0)
+                new_class = 2 if b_new > 0 else (1 if g_new > 0 else 0)
+                if new_class >= old_class:
                     env._accumulated_pts[key] = [r_new, g_new, b_new]
-                # Red (obstacle) only stays if the slot was empty (already handled above)
 
         # ---- Build numpy arrays from the accumulated dict ---------------
         if env._accumulated_pts:
@@ -562,7 +550,7 @@ def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, rob
 
         # --- plot ACCUMULATED local grid (all past scans merged) ---------
         ax2.scatter(accum_wx, accum_wy, c=accum_colors, s=2, alpha=0.6,
-                    label='Accumulated Local Grid')
+                    label='Accumulated Local Grid (obstacle/padding/free)')
 
         cos_yaw = np.cos(env.origin_yaw)
         sin_yaw = np.sin(env.origin_yaw)
@@ -714,7 +702,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
     This method:
     1. Gets the local grid
-    2. Samples 20 random points in the target cell
+    2. Samples n random points in the target cell
     3. Finds the best point (closest to center) with clear line of sight
     4. If found, moves the robot to that point
     5. Returns success/failure
@@ -888,24 +876,23 @@ def easy_walk(options):
             print("[WARNING] Fiducial initialization failed. Continuing without fiducial origin.")
             print("[INFO] The map origin will be set when creating the first waypoint.")
 
-        # Create first waypoint in initial cell (0, 0)
-        recordingInterface.create_default_waypoint(cell_row=0, cell_col=0)
+        # Grid start cell used consistently for origin, wp_0 and serpentine ranking.
+        start_row, start_col = 0, 0
 
-        env = environmentMap.EnvironmentMap(rows=4, cols=4, cell_size=1.5)
+        # Create first waypoint in initial cell (wp_0)
+        recordingInterface.create_default_waypoint(cell_row=start_row, cell_col=start_col)
+
+        env = environmentMap.EnvironmentMap(rows=4, cols=10, cell_size=1)
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
 
         yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y),
                               1.0 - 2.0 * (quat_boot.y ** 2 + quat_boot.z ** 2))
 
-        # Arrotondiamo lo yaw al multiplo di 90° (pi/2) più vicino.
-        # Mantiene i quadrati dritti sul grafico, ma fa espandere la griglia in avanti rispetto al robot.
-        snapped_yaw = round(yaw_boot / (np.pi / 2.0)) * (np.pi / 2.0)
-
-        env.set_origin(x_boot, y_boot, snapped_yaw, start_row=0, start_col=0)
+        env.set_origin(x_boot, y_boot, yaw_boot, start_row=start_row, start_col=start_col)
 
         print(f'[INIT] Boot position: x={x_boot:.3f}, y={y_boot:.3f}, z={z_boot:.3f}')
         print(
-            f'[INIT] Boot orientation: reale {np.rad2deg(yaw_boot):.1f}° -> allineata alla griglia: {np.rad2deg(snapped_yaw):.1f}°')
+            f'[INIT] Boot orientation: reale {np.rad2deg(yaw_boot):.1f}° -> allineata alla griglia: {np.rad2deg(yaw_boot):.1f}°')
 
 
         mission_timestamp = datetime.now().strftime("Mission_%d-%m-%Y_%H-%M-%S")
@@ -925,8 +912,8 @@ def easy_walk(options):
         # Update recording interface to save graph in mission folder
         recordingInterface.set_download_filepath(graph_folder)
 
-        # Generate serpentine path (lawnmower pattern)
-        path = env.generate_serpentine_path()
+        # Generate serpentine path starting from the configured start cell.
+        path = env.generate_serpentine_path(start_cell=env.start_cell)
 
         frontier = []
         current_path_index = 0
@@ -1148,7 +1135,7 @@ def easy_walk(options):
         # Get current position and find optimal path back to start
         x_current, y_current, _, _ = spotUtils.getPosition(robot_state_client)
         current_row, current_col = env.get_cell_from_world(x_current, y_current)
-        start_row, start_col = 0, 0  # wp_0 is at cell (0,0)
+        start_row, start_col = env.start_cell
 
         print(f"[RETURN_OPTIMIZE] Current position: cell ({current_row},{current_col})")
         print(f"[RETURN_OPTIMIZE] Target: wp_0 at cell ({start_row},{start_col})")

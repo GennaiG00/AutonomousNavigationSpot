@@ -1,8 +1,0 @@
-{
-  "extension_name": "easywalk",
-  "version": "1.0.0",
-  "description": "Easy Walk Script per CORE I/O",
-  "images": [
-    "easywalk.tgz"
-  ]
-}

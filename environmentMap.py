@@ -24,6 +24,7 @@ class EnvironmentMap(object):
     #     Recommended usage:
     #     - Use path + target_index for the TARGET cell (from serpentine path)
     #     - Use robot_row/robot_col for ROBOT position (actual position from sensors)
+    #     - Use target_row/target_col for TARGET cell (explicit coordinates)
     #
     #     Call patterns:
     #     1. Path + target_index + robot position (recommended):
@@ -949,7 +950,7 @@ class EnvironmentMap(object):
             return cell_value, explored_sides
         return None, None
 
-    def generate_serpentine_path(self):
+    def generate_serpentine_path(self, start_cell=None):
         """
         Generate a serpentine (lawnmower) path through the grid.
         Pattern:
@@ -957,6 +958,10 @@ class EnvironmentMap(object):
         10 9  8  7  6
         11 12 13 14 15
         ...
+
+        Args:
+            start_cell: Optional (row, col). If provided (or if omitted, self.start_cell
+                        is used), the path is rotated to start from that cell.
 
         Returns:
             list: List of (row, col) tuples in order to visit
@@ -971,6 +976,16 @@ class EnvironmentMap(object):
                 # Odd rows: right to left
                 for col in range(self.cols - 1, -1, -1):
                     path.append((row, col))
+
+        if not path:
+            return path
+
+        effective_start = start_cell if start_cell is not None else self.start_cell
+        if effective_start in path:
+            start_idx = path.index(effective_start)
+            if start_idx > 0:
+                path = path[start_idx:] + path[:start_idx]
+
         return path
 
     def get_world_position_from_cell(self, row, col):
@@ -1167,3 +1182,4 @@ class EnvironmentMap(object):
                 if self.map[row][col] == 1:
                     visited.append((row, col))
         return visited
+
