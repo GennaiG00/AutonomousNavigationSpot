@@ -7,12 +7,13 @@ import bosdyn.client
 import bosdyn.client.lease
 import bosdyn.client.util
 import bosdyn.geometry
-from bosdyn.api.graph_nav import graph_nav_pb2, recording_pb2, nav_pb2
+from bosdyn.api.graph_nav import graph_nav_pb2, recording_pb2, nav_pb2, map_processing_pb2
 from bosdyn.client.frame_helpers import get_odom_tform_body
 from bosdyn.client.graph_nav import GraphNavClient, map_pb2
 from bosdyn.client.map_processing import MapProcessingServiceClient
 from bosdyn.client.recording import GraphNavRecordingServiceClient
 from bosdyn.client.math_helpers import Quat, SE3Pose
+from google.protobuf import wrappers_pb2 as wrappers
 
 class RecordingInterface(object):
     def __init__(self, robot, download_filepath, client_metadata):
@@ -40,6 +41,55 @@ class RecordingInterface(object):
         # Graph caching system
         self._cached_graph = None
         self._graph_cache_valid = False
+
+    def optimize_anchoring(self):
+        """
+        Ottimizza l'ancoraggio della mappa direttamente sul server del robot.
+        Corregge il drift odometrico e rende il navgraph metricamente coerente,
+        senza usare planimetrie esterne.
+        """
+        print(f"\n[{'=' * 40}]")
+        print(f"[ANCHORING] Avvio ottimizzazione globale dell'ancoraggio...")
+
+        try:
+            # Importa wrappers se non è già importato all'inizio del file
+            from google.protobuf import wrappers_pb2 as wrappers
+            from bosdyn.api.graph_nav import map_processing_pb2
+
+            # Chiamiamo il servizio senza alcun "initial_hint"
+            response = self._map_processing_client.process_anchoring(
+                params=map_processing_pb2.ProcessAnchoringRequest.Params(
+                    # Impostato a False, il robot scarta l'ancoraggio grezzo corrente
+                    # e ne genera uno nuovo globale e ottimizzato da zero
+                    optimize_existing_anchoring=wrappers.BoolValue(value=False)
+                ),
+                modify_anchoring_on_server=True,  # Applica le modifiche alla mappa in memoria
+                stream_intermediate_results=False
+            )
+
+            print(f"[ANCHORING] ✓ Ottimizzazione completata!")
+            print(
+                f"[ANCHORING] Status: {response.status}, Iterazioni: {response.iteration}, Costo finale: {response.cost:.4f}")
+            print(f"[{'=' * 40}]\n")
+
+            # Invalida la cache per forzare il download della mappa aggiornata
+            self.invalidate_graph_cache()
+            return True
+
+        except Exception as e:
+            print(f"[ANCHORING] ✗ Ottimizzazione fallita: {e}")
+            print(f"[{'=' * 40}]\n")
+            return False
+
+    def auto_close_loops(self, close_fiducial_loops, close_odometry_loops, *args):
+        """Automatically find and close all loops in the graph."""
+        response = self._map_processing_client.process_topology(
+            params=map_processing_pb2.ProcessTopologyRequest.Params(
+                do_fiducial_loop_closure=wrappers.BoolValue(value=close_fiducial_loops),
+                do_odometry_loop_closure=wrappers.BoolValue(value=close_odometry_loops)),
+            modify_map_on_server=True)
+        print(f'Created {len(response.new_subgraph.edges)} new edge(s).')
+
 
     def _get_graph(self, force_refresh=False):
         """
@@ -969,6 +1019,20 @@ class RecordingInterface(object):
         print(f"[WAYPOINTS] Found {len(waypoints_by_cell)} manual waypoints with cell data")
         return waypoints_by_cell
 
+    def get_manual_waypoint_by_cell(self, cell_row, cell_col):
+        """
+        Get the manual waypoint data for a specific cell.
+
+        Args:
+            cell_row: Row of the cell
+            cell_col: Column of the cell
+
+        Returns:
+            dict or None: Waypoint data if found, otherwise None.
+        """
+        waypoints_by_cell = self.get_all_manual_waypoints_with_cells()
+        return waypoints_by_cell.get((cell_row, cell_col))
+
     def find_shortest_cell_path_bfs(self, start_cell, end_cell, env_map):
         """
         Find shortest path between two cells using BFS on the grid.
@@ -1071,18 +1135,15 @@ class RecordingInterface(object):
         waypoints_in_cells.add(to_waypoint_id)    # Always include destination
 
         for wp in graph.waypoints:
+            wp_x = wp.waypoint_tform_ko.position.x
+            wp_y = wp.waypoint_tform_ko.position.y
             wp_name = wp.annotations.name if wp.annotations.name else f"auto_{wp.id[:8]}"
             waypoint_names[wp.id] = wp_name
 
-            # Sostituisci la lettura KO con la lettura VISION
-            if wp_name in self.waypoint_poses:
-                wp_x = self.waypoint_poses[wp_name]['x']
-                wp_y = self.waypoint_poses[wp_name]['y']
-
-                # Check if this waypoint is inside cell_from or cell_to
-                if (env_map.is_point_in_cell(wp_x, wp_y, cell_from[0], cell_from[1]) or
-                        env_map.is_point_in_cell(wp_x, wp_y, cell_to[0], cell_to[1])):
-                    waypoints_in_cells.add(wp.id)
+            # Check if this waypoint is inside cell_from or cell_to
+            if (env_map.is_point_in_cell(wp_x, wp_y, cell_from[0], cell_from[1]) or
+                env_map.is_point_in_cell(wp_x, wp_y, cell_to[0], cell_to[1])):
+                waypoints_in_cells.add(wp.id)
 
         # Build adjacency list from edges (only for waypoints in the two cells)
         adjacency = {}
@@ -1293,7 +1354,7 @@ class RecordingInterface(object):
             print(f"[EDGE_CREATE] ✗ Failed to create edge: {e}")
             return False
 
-    def _find_nearest_waypoint_cell_to_target(self, target_cell, waypoints_by_cell, env_map):
+    def find_nearest_waypoint_cell_to_target(self, target_cell, waypoints_by_cell, env_map):
         """
         Find the visited cell with a waypoint that is closest to the target cell.
         Uses Manhattan distance and prioritizes cells adjacent to target.
@@ -1413,7 +1474,7 @@ class RecordingInterface(object):
             print(f"[PATH_OPTIMIZE] Target cell {end_cell} has no waypoint - finding nearest waypoint")
 
             # Find the nearest visited cell with a waypoint (adjacent to target)
-            nearest_wp_cell = self._find_nearest_waypoint_cell_to_target(end_cell, waypoints_by_cell, env_map)
+            nearest_wp_cell = self.find_nearest_waypoint_cell_to_target(end_cell, waypoints_by_cell, env_map)
 
             if nearest_wp_cell is None:
                 print(f"[PATH_OPTIMIZE] ERROR: No reachable waypoint found near target cell {end_cell}")

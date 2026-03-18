@@ -24,53 +24,53 @@ import spotUtils
 # TODO: check if we can avoid to set a sleep after each movement command
 # TODO: change the folder destination of the name download of graph
 
-def find_nearest_waypoint_to_cell(env, target_cell, recording_interface):
-    """
-    Find the nearest waypoint to a target cell.
-
-    Args:
-        env: EnvironmentMap instance
-        target_cell: (row, col) tuple
-        recording_interface: RecordingInterface to access waypoints
-
-    Returns:
-        str: Waypoint ID of nearest waypoint, or None if no waypoints exist
-    """
-    # Get target world position
-    target_world = env.get_world_position_from_cell(target_cell[0], target_cell[1])
-    if target_world is None:
-        return None
-
-    target_x, target_y = target_world
-
-    # Get all waypoints from the graph
-    waypoints = recording_interface.get_waypoint_list()
-    if not waypoints:
-        print("[WARNING] No waypoints available yet")
-        return None
-
-    # Find closest waypoint
-    min_distance = float('inf')
-    nearest_waypoint_id = None
-
-    for wp in waypoints:
-        wp_name = wp.annotations.name
-
-        if wp_name in recording_interface.waypoint_poses:
-            wp_x = recording_interface.waypoint_poses[wp_name]['x']
-            wp_y = recording_interface.waypoint_poses[wp_name]['y']
-        else:
-            continue
-
-        # Calculate distance
-        dist = np.sqrt((wp_x - target_x) ** 2 + (wp_y - target_y) ** 2)
-
-        if dist < min_distance:
-            min_distance = dist
-            nearest_waypoint_id = wp.id
-
-    print(f"[NAV] Nearest waypoint to cell {target_cell}: {nearest_waypoint_id} (distance: {min_distance:.2f}m)")
-    return nearest_waypoint_id
+# def find_nearest_waypoint_to_cell(env, target_cell, recording_interface):
+#     """
+#     Find the nearest waypoint to a target cell.
+#
+#     Args:
+#         env: EnvironmentMap instance
+#         target_cell: (row, col) tuple
+#         recording_interface: RecordingInterface to access waypoints
+#
+#     Returns:
+#         str: Waypoint ID of nearest waypoint, or None if no waypoints exist
+#     """
+#     # Get target world position
+#     target_world = env.get_world_position_from_cell(target_cell[0], target_cell[1])
+#     if target_world is None:
+#         return None
+#
+#     target_x, target_y = target_world
+#
+#     # Get all waypoints from the graph
+#     waypoints = recording_interface.get_waypoint_list()
+#     if not waypoints:
+#         print("[WARNING] No waypoints available yet")
+#         return None
+#
+#     # Find closest waypoint
+#     min_distance = float('inf')
+#     nearest_waypoint_id = None
+#
+#     for wp in waypoints:
+#         wp_name = wp.annotations.name
+#
+#         if wp_name in recording_interface.waypoint_poses:
+#             wp_x = recording_interface.waypoint_poses[wp_name]['x']
+#             wp_y = recording_interface.waypoint_poses[wp_name]['y']
+#         else:
+#             continue
+#
+#         # Calculate distance
+#         dist = np.sqrt((wp_x - target_x) ** 2 + (wp_y - target_y) ** 2)
+#
+#         if dist < min_distance:
+#             min_distance = dist
+#             nearest_waypoint_id = wp.id
+#
+#     print(f"[NAV] Nearest waypoint to cell {target_cell}: {nearest_waypoint_id} (distance: {min_distance:.2f}m)")
+#     return nearest_waypoint_id
 
 def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0):
     """
@@ -882,7 +882,7 @@ def easy_walk(options):
         # Create first waypoint in initial cell (wp_0)
         recordingInterface.create_default_waypoint(cell_row=start_row, cell_col=start_col)
 
-        env = environmentMap.EnvironmentMap(rows=4, cols=10, cell_size=1)
+        env = environmentMap.EnvironmentMap(rows=5, cols=17, cell_size=2)
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
 
         yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y),
@@ -924,6 +924,7 @@ def easy_walk(options):
         frontier.extend(find_new_borders(env, robot_row, robot_col, path, frontier))
 
         while(True):
+            print(frontier)
             print(f"\n{'#'*70}")
             print(f"### PATH STEP: {current_path_index + 1}/{len(path)} ###")
             print(f"{'#'*70}\n")
@@ -950,6 +951,7 @@ def easy_walk(options):
                 check = attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client, env, selected_border[0], selected_border[1], mission_folder, visualization_counter, recordingInterface)
                 visualization_counter += 1
                 frontier.remove(selected_border)
+                #recordingInterface.auto_close_loops(False, True)
                 if check:
                     env.update_position(x, y)
                     env.print_map()
@@ -978,133 +980,148 @@ def easy_walk(options):
                     # Stop recording to analyze graph (no need to download snapshots, _get_graph() is used internally)
                     recordingInterface.stop_recording()
 
+                    target_cell = (target_row, target_col)
+                    waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
+                    nearest_cell = recordingInterface.find_nearest_waypoint_cell_to_target(target_cell, waypoints_by_cell, env)
+                    nearest_wp = recordingInterface.get_manual_waypoint_by_cell(nearest_cell[0], nearest_cell[1])
+
+
                     # Find shortest path (WITHOUT creating edges yet)
-                    path_result = recordingInterface.find_and_optimize_path(
-                        start_cell=(current_row, current_col),
-                        end_cell=(target_row, target_col),
-                        env_map=env,
-                        create_missing_edges=False  # Don't create edges yet
-                    )
-
-                    if path_result['success']:
-                        print(f"\n[PATH_OPTIMIZE] Path found: {len(path_result['cell_path'])-1} hops")
-                        print(f"[PATH_OPTIMIZE] Waypoints: {' -> '.join(path_result['waypoint_names'])}")
-
-                        # Create missing edges if needed (requires recording to be active)
-                        if path_result['missing_edges']:
-                            print(f"[PATH_OPTIMIZE] Found {len(path_result['missing_edges'])} missing edges - creating them...")
-
-                            # Restart recording to create edges
-                            recordingInterface.start_recording()
-
-                            for from_name, to_name in path_result['missing_edges']:
-                                success = recordingInterface.create_edge_between_waypoints(from_name, to_name)
-                                if success:
-                                    path_result['edges_created'].append((from_name, to_name))
-
-                            print(f"[PATH_OPTIMIZE] Created {len(path_result['edges_created'])} edges")
-
-                            # Stop recording again for navigation
-                            recordingInterface.stop_recording()
-                            # Note: No need to download_full_graph - cache is invalidated by create_edge_between_waypoints
-
-                        if path_result['edges_created']:
-                            print(f"[PATH_OPTIMIZE] Created {len(path_result['edges_created'])} missing edges")
-                            # Note: No need to download_full_graph - _get_graph() will fetch fresh data
-
-                        # Get waypoints by cell for navigation
-                        waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
-
-                        # Check if the last cell in the path is the target cell
-                        waypoints_to_navigate = path_result['waypoint_names'][1:]  # Skip first (already there)
-
-                        # If the last waypoint is in the target cell, we don't need to navigate to it
-                        # but stop at the previous waypoint
-                        last_cell_in_path = path_result['cell_path'][-1] if path_result['cell_path'] else None
-
-                        if last_cell_in_path == (target_row, target_col) and len(waypoints_to_navigate) > 1:
-                            # Last waypoint is in target cell - stop at the previous one
-                            waypoints_to_navigate = waypoints_to_navigate[:-1]
-                            print(f"[NAV] Target cell has waypoint - stopping at previous waypoint")
-                        elif last_cell_in_path == (target_row, target_col) and len(waypoints_to_navigate) == 1:
-                            # There's only one waypoint and it's in the target cell - don't navigate, we're already close
-                            waypoints_to_navigate = []
-                            print(f"[NAV] Target cell is adjacent - no navigation needed, attempting direct entry")
+                    # path_result = recordingInterface.find_and_optimize_path(
+                    #     start_cell=(current_row, current_col),
+                    #     end_cell=(target_row, target_col),
+                    #     env_map=env,
+                    #     create_missing_edges=False  # Don't create edges yet
+                    # )
+                    #
+                    # if path_result['success']:
+                    #     print(f"\n[PATH_OPTIMIZE] Path found: {len(path_result['cell_path'])-1} hops")
+                    #     print(f"[PATH_OPTIMIZE] Waypoints: {' -> '.join(path_result['waypoint_names'])}")
+                    #
+                    #     # Create missing edges if needed (requires recording to be active)
+                    #     if path_result['missing_edges']:
+                    #         print(f"[PATH_OPTIMIZE] Found {len(path_result['missing_edges'])} missing edges - creating them...")
+                    #
+                    #         # Restart recording to create edges
+                    #         recordingInterface.start_recording()
+                    #
+                    #         for from_name, to_name in path_result['missing_edges']:
+                    #             success = recordingInterface.create_edge_between_waypoints(from_name, to_name)
+                    #             if success:
+                    #                 path_result['edges_created'].append((from_name, to_name))
+                    #
+                    #         print(f"[PATH_OPTIMIZE] Created {len(path_result['edges_created'])} edges")
+                    #
+                    #         # Stop recording again for navigation
+                    #         recordingInterface.stop_recording()
+                    #         # Note: No need to download_full_graph - cache is invalidated by create_edge_between_waypoints
+                    #
+                    #     if path_result['edges_created']:
+                    #         print(f"[PATH_OPTIMIZE] Created {len(path_result['edges_created'])} missing edges")
+                    #         # Note: No need to download_full_graph - _get_graph() will fetch fresh data
+                    #
+                    #     # Get waypoints by cell for navigation
+                    #     waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
+                    #
+                    #     # Check if the last cell in the path is the target cell
+                    #     waypoints_to_navigate = path_result['waypoint_names'][1:]  # Skip first (already there)
+                    #
+                    #     # If the last waypoint is in the target cell, we don't need to navigate to it
+                    #     # but stop at the previous waypoint
+                    #     last_cell_in_path = path_result['cell_path'][-1] if path_result['cell_path'] else None
+                    #
+                    #     if last_cell_in_path == (target_row, target_col) and len(waypoints_to_navigate) > 1:
+                    #         # Last waypoint is in target cell - stop at the previous one
+                    #         waypoints_to_navigate = waypoints_to_navigate[:-1]
+                    #         print(f"[NAV] Target cell has waypoint - stopping at previous waypoint")
+                    #     elif last_cell_in_path == (target_row, target_col) and len(waypoints_to_navigate) == 1:
+                    #         # There's only one waypoint and it's in the target cell - don't navigate, we're already close
+                    #         waypoints_to_navigate = []
+                    #         print(f"[NAV] Target cell is adjacent - no navigation needed, attempting direct entry")
 
                         # Navigate through waypoints (stop BEFORE target cell)
-                        navigation_success = True
-                        for i, waypoint_name in enumerate(waypoints_to_navigate, 1):
-                            print(f"\n[NAV] Step {i}/{len(waypoints_to_navigate)}: Navigating to {waypoint_name}")
+                        # TODO prova ad eliminare questa parte
+                        # navigation_success = True
+                        # for i, waypoint_name in enumerate(waypoints_to_navigate, 1):
+                        #     print(f"\n[NAV] Step {i}/{len(waypoints_to_navigate)}: Navigating to {waypoint_name}")
+                        #
+                        #     # Find waypoint data
+                        #     waypoint_data = None
+                        #     for cell, wp_data in waypoints_by_cell.items():
+                        #         if wp_data['name'] == waypoint_name:
+                        #             waypoint_data = wp_data
+                        #             break
+                        #
+                        #     if waypoint_data:
+                        #         success = recordingInterface.navigate_to_waypoint(
+                        #             waypoint_data['id'],
+                        #             robot_state_client
+                        #         )
+                        #
+                        #         if success:
+                        #             recordingInterface.realign_robot_to_waypoint_orientation(waypoint_data['name'])
+                        #             print(f"[NAV] Reached {waypoint_name}")
+                        #         else:
+                        #             print(f"[NAV] Failed to reach {waypoint_name}")
+                        #             navigation_success = False
+                        #             break
+                        #     else:
+                        #         print(f"[NAV] ERROR: Waypoint data not found for {waypoint_name}")
+                        #         navigation_success = False
+                        #         break
+                    waypoints_by_cell = recordingInterface.get_all_manual_waypoints_with_cells()
 
-                            # Find waypoint data
-                            waypoint_data = None
-                            for cell, wp_data in waypoints_by_cell.items():
-                                if wp_data['name'] == waypoint_name:
+                    for cell, wp_data in waypoints_by_cell.items():
+                        if wp_data['name'] == nearest_wp['name']:
                                     waypoint_data = wp_data
                                     break
 
-                            if waypoint_data:
-                                success = recordingInterface.navigate_to_waypoint(
-                                    waypoint_data['id'],
-                                    robot_state_client
-                                )
+                    navigation_success = recordingInterface.navigate_to_waypoint(nearest_wp['id'], robot_state_client)
 
-                                if success:
-                                    recordingInterface.realign_robot_to_waypoint_orientation(waypoint_data['name'])
-                                    print(f"[NAV] Reached {waypoint_name}")
-                                else:
-                                    print(f"[NAV] Failed to reach {waypoint_name}")
-                                    navigation_success = False
-                                    break
-                            else:
-                                print(f"[NAV] ERROR: Waypoint data not found for {waypoint_name}")
-                                navigation_success = False
-                                break
+                    if navigation_success:
+                        # Resume recording at target waypoint
+                        recordingInterface.start_recording()
 
-                        if navigation_success:
-                            # Resume recording at target waypoint
-                            recordingInterface.start_recording()
+                        # Try to enter the target cell
+                        check = attempt_enter_cell_from_position(
+                            local_grid_client, robot_state_client, command_client,
+                            env, target_row, target_col, mission_folder, visualization_counter, recordingInterface
+                        )
+                        visualization_counter += 1
 
-                            # Try to enter the target cell
-                            check = attempt_enter_cell_from_position(
-                                local_grid_client, robot_state_client, command_client,
-                                env, target_row, target_col, mission_folder, visualization_counter, recordingInterface
-                            )
-                            visualization_counter += 1
+                        if check:
+                            # Success - create waypoint and update map
+                            x_final, y_final, _, _ = spotUtils.getPosition(robot_state_client)
+                            recordingInterface.create_default_waypoint(cell_row=target_row, cell_col=target_col)
+                            env.add_waypoint(x_final, y_final)
 
-                            if check:
-                                # Success - create waypoint and update map
-                                x_final, y_final, _, _ = spotUtils.getPosition(robot_state_client)
-                                recordingInterface.create_default_waypoint(cell_row=target_row, cell_col=target_col)
-                                env.add_waypoint(x_final, y_final)
+                            # Mark cell as visited (IMPORTANT!)
+                            env.mark_cell_visited(target_row, target_col)
 
-                                # Mark cell as visited (IMPORTANT!)
-                                env.mark_cell_visited(target_row, target_col)
-
-                                # Remove from frontier
-                                frontier.remove((target_row, target_col, rank))
-
-                                # Update robot position and find new borders
-                                robot_row, robot_col = env.get_cell_from_world(x_final, y_final)
-                                frontier.extend(find_new_borders(env, robot_row, robot_col, path, frontier))
-
-                                print(f"[SUCCESS] Entered cell ({target_row},{target_col}) via optimized path")
-                            else:
-                                # Failure - remove from frontier anyway
-                                frontier.remove((target_row, target_col, rank))
-                                print(f"[ERROR] Could not enter cell ({target_row},{target_col}) after navigating optimized path")
-                        else:
-                            print(f"[ERROR] Navigation failed along optimized path")
-                            # IMPORTANT: Resume recording even in case of failure
-                            recordingInterface.start_recording()
                             # Remove from frontier
                             frontier.remove((target_row, target_col, rank))
+
+                            # Update robot position and find new borders
+                            robot_row, robot_col = env.get_cell_from_world(x_final, y_final)
+                            frontier.extend(find_new_borders(env, robot_row, robot_col, path, frontier))
+
+                            print(f"[SUCCESS] Entered cell ({target_row},{target_col}) via optimized path")
+                        else:
+                            # Failure - remove from frontier anyway
+                            frontier.remove((target_row, target_col, rank))
+                            print(f"[ERROR] Could not enter cell ({target_row},{target_col}) after navigating optimized path")
                     else:
-                        print(f"[ERROR] No path found to cell ({target_row},{target_col})")
+                        print(f"[ERROR] Navigation failed along optimized path")
                         # IMPORTANT: Resume recording even in case of failure
                         recordingInterface.start_recording()
-                        # Remove from frontier - unreachable
+                        # Remove from frontier
                         frontier.remove((target_row, target_col, rank))
+                else:
+                    print(f"[ERROR] No path found to cell ({target_row},{target_col})")
+                    # IMPORTANT: Resume recording even in case of failure
+                    recordingInterface.start_recording()
+                    # Remove from frontier - unreachable
+                    frontier.remove((target_row, target_col, rank))
 
             if len(frontier) == 0:
                 break
@@ -1141,28 +1158,29 @@ def easy_walk(options):
         print(f"[RETURN_OPTIMIZE] Target: wp_0 at cell ({start_row},{start_col})")
 
         # Find optimal path back to start
-        return_path_result = recordingInterface.find_and_optimize_path(
-            start_cell=(current_row, current_col),
-            end_cell=(start_row, start_col),
-            env_map=env,
-            create_missing_edges=True  # Create edges if needed
-        )
+        # return_path_result = recordingInterface.find_and_optimize_path(
+        #     start_cell=(current_row, current_col),
+        #     end_cell=(start_row, start_col),
+        #     env_map=env,
+        #     create_missing_edges=True  # Create edges if needed
+        # )
 
-        if return_path_result['success']:
-            print(f"\n[RETURN_OPTIMIZE] ✓ Return path found: {len(return_path_result['cell_path'])-1} hops")
-            print(f"[RETURN_OPTIMIZE] Waypoints: {' -> '.join(return_path_result['waypoint_names'])}")
-
-            if return_path_result['edges_created']:
-                print(f"[RETURN_OPTIMIZE] Created {len(return_path_result['edges_created'])} edges for return path")
-                for from_name, to_name in return_path_result['edges_created']:
-                    print(f"  - {from_name} → {to_name}")
-        else:
-            print(f"[RETURN_OPTIMIZE] ✗ Could not optimize return path")
+        # if return_path_result['success']:
+        #     print(f"\n[RETURN_OPTIMIZE] ✓ Return path found: {len(return_path_result['cell_path'])-1} hops")
+        #     print(f"[RETURN_OPTIMIZE] Waypoints: {' -> '.join(return_path_result['waypoint_names'])}")
+        #
+        #     if return_path_result['edges_created']:
+        #         print(f"[RETURN_OPTIMIZE] Created {len(return_path_result['edges_created'])} edges for return path")
+        #         for from_name, to_name in return_path_result['edges_created']:
+        #             print(f"  - {from_name} → {to_name}")
+        # else:
+        #     print(f"[RETURN_OPTIMIZE] ✗ Could not optimize return path")
 
         print(f"{'='*70}\n")
-
+        recordingInterface.auto_close_loops(True, False)
         recordingInterface.stop_recording()
-        recordingInterface.find_nearest_waypoint_to_position(x_current, y_current)
+        recordingInterface.optimize_anchoring()
+        #recordingInterface.find_nearest_waypoint_to_position(x_current, y_current)
         recordingInterface.navigate_to_first_waypoint(robot_state_client)
 
         command_client.robot_command(RobotCommandBuilder.synchro_sit_command(), end_time_secs=time.time() + 20)
