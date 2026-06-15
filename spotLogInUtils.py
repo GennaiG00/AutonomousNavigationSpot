@@ -11,15 +11,15 @@ def setLogInfo(options):
     bosdyn.client.util.setup_logging(options.verbose)
     sdk = bosdyn.client.create_standard_sdk(options.name)
     robot = sdk.create_robot(options.hostname)
-    bosdyn.client.util.authenticate(robot)
+
+    robot.authenticate_from_payload_credentials(options.guid, options.secret)
+
+    # bosdyn.client.util.authenticate(robot)
     robot.time_sync.wait_for_sync()
     lease_client = robot.ensure_client(bosdyn.client.lease.LeaseClient.default_service_name)
     robot_state_client = robot.ensure_client(RobotStateClient.default_service_name)
     session_name = options.recording_session_name
-    if session_name == '':
-        session_name = os.path.basename(
-            '/Users/gianmariagennai/Documents/Unifi/Magistrale/spot/autowalk/TestAuto'
-        )
+    session_name = options.recording_session_name
     user_name = options.recording_user_name
     if user_name == '':
         user_name = robot._current_user

@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  autonomous_mission:
+    image: "autonomous_mission:latest" # Verrà sostituito automaticamente dal nome nel manifest.json
+    network_mode: "host" # Manteniamo host per sicurezza di connessione coi client base
+    volumes:
+      # Mappiamo le tue cartelle di salvataggio
+      - ./graph:/app/graph
+      - ./MissionMap:/app/MissionMap
+      - ./MissionLogs:/app/MissionLogs
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: "1024m" # Diamo max 1GB di RAM al tuo script
+    oom_score_adj: 1000 # Sacrifica questo container se la Jetson finisce la RAM

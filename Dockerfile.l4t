@@ -1,0 +1,18 @@
+
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsm6 libglib2.0-0 libxrender1 libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN python3 -m pip install -r requirements.txt
+
+WORKDIR /app
+
+COPY easy_walk_CORE.py environmentMap.py movements.py navGraphUtils.py spotGrid.py spotLogInUtils.py spotUtils.py /app/
+
+RUN mkdir -p graph MissionMap MissionLogs
+
+CMD ["python3", "easy_walk_CORE.py"]

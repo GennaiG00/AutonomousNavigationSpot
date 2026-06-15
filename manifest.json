@@ -1,0 +1,14 @@
+{
+  "extension_name": "autonomous_mission",
+  "description": "This extension allows the robot to autonomously navigate through a mission map using a graph-based approach.",
+  "version": "0.0.0",
+  "images": ["autonomous_mission.tgz"],
+  "installation_target": [
+    "CORE_IO"
+  ],
+  "directories_to_save": [
+    "/app/graph",
+    "/app/MissionMap",
+    "/app/MissionLogs"
+  ]
+}
