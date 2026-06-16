@@ -1,0 +1,23 @@
+# Boston Dynamics Spot SDK
+# Core SDK for robot control and graph navigation
+bosdyn-client>=4.1.0
+bosdyn-api>=4.1.0
+bosdyn-core>=4.1.0
+
+# Numerical computing
+numpy>=1.19.0
+
+# Data visualization
+matplotlib>=3.3.0
+
+# Protocol Buffers (included with bosdyn but listed explicitly for clarity)
+protobuf>=3.12.0
+
+# Standard library modules used:
+# - os
+# - sys
+# - time
+# - math
+# - datetime
+# These are built-in and don't require installation
+
