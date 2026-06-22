@@ -55,7 +55,6 @@ def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0):
 
     return True  # Path clear
 
-
 def sample_cell_points(env, cell_row, cell_col, num_samples=200):
     """Sample random points within a cell."""
     world_pos = env.get_world_position_from_cell(cell_row, cell_col)
@@ -83,13 +82,15 @@ def sample_cell_points(env, cell_row, cell_col, num_samples=200):
 
     return samples
 
-
-def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cells_obstacle_dist):
+#TODO: test this part. Now this method take a point nearest to the center of the cell.
+def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cells_obstacle_dist, global_sampler):
     """Sample random points in a cell and find the one with clear path that is closest to cell center."""
-    sampled_points = sample_cell_points(env, cell_row, cell_col, num_samples=100)
+    # sampled_points = sample_cell_points(env, cell_row, cell_col, num_samples=100)
 
-    if not sampled_points:
-        return None, None, [], []
+    # if not sampled_points:
+    #    return None, None, [], []
+
+    target_cell_points = global_sampler.get_point_in_cell(cell_row, cell_col)
 
     cell_center = env.get_world_position_from_cell(cell_row, cell_col)
     if cell_center is None:
@@ -100,25 +101,25 @@ def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cell
     valid_samples = []
     rejected_samples = []
 
-    for sample_x, sample_y in sampled_points:
-        if check_line_of_sight(robot_x, robot_y, sample_x, sample_y, pts, cells_obstacle_dist, obstacle_threshold=0.15):
-            valid_samples.append((sample_x, sample_y))
-        else:
-            rejected_samples.append((sample_x, sample_y))
+    # for sample_x, sample_y in target_cell_points:
+    #     if check_line_of_sight(robot_x, robot_y, sample_x, sample_y, pts, cells_obstacle_dist, obstacle_threshold=0.15):
+    #         valid_samples.append((sample_x, sample_y))
+    #     else:
+    #         rejected_samples.append((sample_x, sample_y))
 
-    if not valid_samples:
-        print(f"[WARNING] No clear path found to any sampled point in cell ({cell_row},{cell_col})")
-        return None, None, valid_samples, rejected_samples
+    # if not valid_samples:
+    #     print(f"[WARNING] No clear path found to any sampled point in cell ({cell_row},{cell_col})")
+    #     return None, None, valid_samples, rejected_samples
 
     best_point = None
     min_distance = float('inf')
-    for sample_x, sample_y in valid_samples:
+    for sample_x, sample_y in target_cell_points:
         dist = np.sqrt((sample_x - cell_center_x) ** 2 + (sample_y - cell_center_y) ** 2)
         if dist < min_distance:
             min_distance = dist
             best_point = (sample_x, sample_y)
 
-    return best_point[0], best_point[1], valid_samples, rejected_samples
+    return best_point[0], best_point[1], target_cell_points, rejected_samples
 
 def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
                                    candidates, chosen_point, iteration, env=None, save_path=None):
@@ -390,7 +391,7 @@ def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, rob
 
 
 def attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client,
-                                     env, target_row, target_col, mission_folder=None, iteration=0,
+                                     env, target_row, target_col, global_sampler, prm_graph, mission_folder=None, iteration=0,
                                      recordingInterface=None, velo_processor=None):
     """Attempt to enter a target cell from the current robot position."""
     print(f"\n[ATTEMPT] Trying to enter cell ({target_row},{target_col}) from current position...")
@@ -435,8 +436,14 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
     robot_x, robot_y = vision_tform_body.position.x, vision_tform_body.position.y
 
     target_x, target_y, valid_samples, rejected_samples = find_best_point_in_cell(
-        robot_x, robot_y, env, target_row, target_col, pts, cells_obstacle_dist
-    )
+        robot_x, robot_y, env, target_row, target_col, pts, cells_obstacle_dist, global_sampler)
+
+    start_id = global_sampler.get_nearest_points(robot_x, robot_y, 1)
+    goal_id = global_sampler.get_nearest_points(target_x, target_y, 1)
+
+    path = prm_graph.find_path_dijkstra(start_id, goal_id)
+
+    
 
     if target_x is None or target_y is None:
         print(f"[FAIL] No clear path found to cell ({target_row},{target_col}) from current position")
@@ -521,17 +528,20 @@ def easy_walk(options):
         recordingInterface.create_default_waypoint(cell_row=start_row, cell_col=start_col)
 
         env = environmentMap.EnvironmentMap(rows=3, cols=5, cell_size=2)
-        #FIXME: test this part
+        #FIXME: test this part ------------
         gb_sampler = global_sampler.GlobalSampler(env, 30)
         gb_sampler.sample_global_grid()
         prm = prm_graph.PRM()
         prm.add_nodes_from_sampler(gb_sampler)
         prm.build_graph()
-
+        #FIXME ------------
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
 
-        yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y),
-                              1.0 - 2.0 * (quat_boot.y ** 2 + quat_boot.z ** 2))
+        yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y), 1.0 - 2.0 * (quat_boot.y ** 2 + quat_boot.z ** 2))
+
+        #FIXME ------------
+        prm.add_node(max(prm.nodes.keys(), default=-1)+1  ,x_boot, y_boot)
+        #FIXME ------------
 
         env.set_origin(x_boot, y_boot, yaw_boot, start_row=start_row, start_col=start_col)
 
@@ -545,13 +555,12 @@ def easy_walk(options):
         os.makedirs(mission_log_folder, exist_ok=True)
         mission_folder = mission_map_folder
         mission_log_path = os.path.join(mission_log_folder, "mission_log.txt")
-        mission_log_file = open(mission_log_path, "a", buffering=1)
+        open(mission_log_path, "a", buffering=1)
 
         recordingInterface.set_download_filepath(graph_folder)
         path = env.generate_serpentine_path(start_cell=env.start_cell)
 
         frontier = []
-        current_path_index = 0
         visualization_counter = 0
 
         x, y, z, _ = spotUtils.getPosition(robot_state_client)
@@ -568,8 +577,9 @@ def easy_walk(options):
 
             if len(borders_in_frontier) != 0:
                 selected_border = min(borders_in_frontier, key=lambda b: b[2])
+                #FIXME: Choose goal point and use Dijkstra to find shortest path.
                 check = attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client, env,
-                                                         selected_border[0], selected_border[1], mission_folder,
+                                                         selected_border[0], selected_border[1],global_sampler, prm_graph, mission_folder,
                                                          visualization_counter, recordingInterface,
                                                          velo_processor=velo_processor)
                 visualization_counter += 1
@@ -600,7 +610,7 @@ def easy_walk(options):
                     if navigation_success:
                         recordingInterface.start_recording()
                         check = attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client,
-                                                                 env, target_row, target_col, mission_folder,
+                                                                 env, target_row, target_col,global_sampler, prm_graph, mission_folder,
                                                                  visualization_counter, recordingInterface,
                                                                  velo_processor=velo_processor)
                         visualization_counter += 1
