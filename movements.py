@@ -76,7 +76,7 @@ def relative_move_velocity_command(v_x, v_y, v_rot, robot_command_client, robot_
 
     cmd = RobotCommandBuilder.synchro_velocity_command(v_x=v_x, v_y=v_y, v_rot=v_rot, params=mobility_params)
 
-    robot_command_client.robot_command(command=cmd, end_time_secs=time.time() + 6000.0)
+    robot_command_client.robot_command(command=cmd, end_time_secs=time.time() + 1.0)
 
     current_state = robot_state_client.get_robot_state()
     current_transforms = current_state.kinematic_state.transforms_snapshot

@@ -22,6 +22,9 @@ import environmentMap
 import spotUtils
 import velodyneClient
 
+import global_sampler
+import prm_graph
+
 
 # TODO: check if we can avoid to set a sleep after each movement command
 # TODO: change the folder destination of the name download of graph
@@ -109,7 +112,6 @@ def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cell
 
     best_point = None
     min_distance = float('inf')
-
     for sample_x, sample_y in valid_samples:
         dist = np.sqrt((sample_x - cell_center_x) ** 2 + (sample_y - cell_center_y) ** 2)
         if dist < min_distance:
@@ -117,51 +119,6 @@ def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cell
             best_point = (sample_x, sample_y)
 
     return best_point[0], best_point[1], valid_samples, rejected_samples
-
-
-def draw_explored_sides(ax, cell_x, cell_y, half_size, sides_status, cos_yaw, sin_yaw):
-    """Draw red lines on the edges of a cell to show which sides have been explored."""
-    if sides_status == 0b0000:
-        return
-
-    edge_inset = 0.05
-
-    if sides_status & 0b1000:
-        north_start = (-half_size + edge_inset, half_size)
-        north_end = (half_size - edge_inset, half_size)
-        ns_wx = cell_x + (north_start[0] * cos_yaw - north_start[1] * sin_yaw)
-        ns_wy = cell_y + (north_start[0] * sin_yaw + north_start[1] * cos_yaw)
-        ne_wx = cell_x + (north_end[0] * cos_yaw - north_end[1] * sin_yaw)
-        ne_wy = cell_y + (north_end[0] * sin_yaw + north_end[1] * cos_yaw)
-        ax.plot([ns_wx, ne_wx], [ns_wy, ne_wy], 'r-', linewidth=4, alpha=0.8, zorder=4)
-
-    if sides_status & 0b0100:
-        east_start = (half_size, -half_size + edge_inset)
-        east_end = (half_size, half_size - edge_inset)
-        es_wx = cell_x + (east_start[0] * cos_yaw - east_start[1] * sin_yaw)
-        es_wy = cell_y + (east_start[0] * sin_yaw + east_start[1] * cos_yaw)
-        ee_wx = cell_x + (east_end[0] * cos_yaw - east_end[1] * sin_yaw)
-        ee_wy = cell_y + (east_end[0] * sin_yaw + east_end[1] * cos_yaw)
-        ax.plot([es_wx, ee_wx], [es_wy, ee_wy], 'r-', linewidth=4, alpha=0.8, zorder=4)
-
-    if sides_status & 0b0010:
-        south_start = (-half_size + edge_inset, -half_size)
-        south_end = (half_size - edge_inset, -half_size)
-        ss_wx = cell_x + (south_start[0] * cos_yaw - south_start[1] * sin_yaw)
-        ss_wy = cell_y + (south_start[0] * sin_yaw + south_start[1] * cos_yaw)
-        se_wx = cell_x + (south_end[0] * cos_yaw - south_end[1] * sin_yaw)
-        se_wy = cell_y + (south_end[0] * sin_yaw + south_end[1] * cos_yaw)
-        ax.plot([ss_wx, se_wx], [ss_wy, se_wy], 'r-', linewidth=4, alpha=0.8, zorder=4)
-
-    if sides_status & 0b0001:
-        west_start = (-half_size, -half_size + edge_inset)
-        west_end = (-half_size, half_size - edge_inset)
-        ws_wx = cell_x + (west_start[0] * cos_yaw - west_start[1] * sin_yaw)
-        ws_wy = cell_y + (west_start[0] * sin_yaw + west_start[1] * cos_yaw)
-        we_wx = cell_x + (west_end[0] * cos_yaw - west_end[1] * sin_yaw)
-        we_wy = cell_y + (west_end[0] * sin_yaw + west_end[1] * cos_yaw)
-        ax.plot([ws_wx, we_wx], [ws_wy, we_wy], 'r-', linewidth=4, alpha=0.8, zorder=4)
-
 
 def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
                                    candidates, chosen_point, iteration, env=None, save_path=None):
@@ -394,8 +351,6 @@ def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, rob
                 ax2.add_patch(rect)
                 ax2.text(cell_x, cell_y, f'{row},{col}', ha='center', va='center', fontsize=7, color='black',
                          weight='bold', zorder=3, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
-                if cell_status != 1 and sides_status != 0b0000:
-                    draw_explored_sides(ax2, cell_x, cell_y, half_size, sides_status, cos_yaw, sin_yaw)
 
         if 'rejected' in candidates:
             for point in candidates['rejected']: ax2.plot(point[0], point[1], 'rx', markersize=10, markeredgewidth=2.5,
@@ -443,6 +398,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
     proto = local_grid_client.get_local_grids(['obstacle_distance'])
     pts, cells_obstacle_dist, color = spotGrid.create_vtk_obstacle_grid(proto, robot_state_client)
 
+    #TODO: test this part
     if velo_processor is not None:
         velo_obstacles = velo_processor.get_latest_obstacles()
         if velo_obstacles.size > 0:
@@ -503,8 +459,9 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
     dyaw = np.arctan2(np.sin(target_yaw - current_yaw), np.cos(target_yaw - current_yaw))
 
     print("[INFO] Step 1: Rotating to face target...")
-    #movements.relative_move(0, 0, dyaw, "vision", command_client, robot_state_client)
-    movements.mov(0, 0, 0, command_client, robot_state_client, VISION_FRAME_NAME)
+    #FIXME: Try before with relative move and PRM. After that we can try with relative_move_velocity_command.
+    movements.relative_move(0, 0, dyaw, "vision", command_client, robot_state_client)
+    #movements.relative_move_velocity_command(0, 0, 0, command_client, robot_state_client, VISION_FRAME_NAME)
 
     print(f"[INFO] Step 2: Moving forward {distance:.2f}m...")
     success_move = movements.relative_move(distance, 0, 0, "vision", command_client, robot_state_client)
@@ -540,6 +497,7 @@ def easy_walk(options):
     recordingInterface.stop_recording()
     recordingInterface.clear_map()
 
+
     with bosdyn.client.lease.LeaseKeepAlive(lease_client, must_acquire=True, return_at_exit=True):
         command_client = robot.ensure_client(RobotCommandClient.default_service_name)
         local_grid_client = robot.ensure_client(LocalGridClient.default_service_name)
@@ -557,12 +515,19 @@ def easy_walk(options):
         recordingInterface.clear_map()
         recordingInterface.start_recording()
 
-        fiducial_success = recordingInterface.initialize_with_fiducial(robot_state_client, 549)
+        recordingInterface.initialize_with_fiducial(robot_state_client, 549)
 
         start_row, start_col = 0, 0
         recordingInterface.create_default_waypoint(cell_row=start_row, cell_col=start_col)
 
         env = environmentMap.EnvironmentMap(rows=3, cols=5, cell_size=2)
+        #FIXME: test this part
+        gb_sampler = global_sampler.GlobalSampler(env, 30)
+        gb_sampler.sample_global_grid()
+        prm = prm_graph.PRM()
+        prm.add_nodes_from_sampler(gb_sampler)
+        prm.build_graph()
+
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
 
         yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y),
