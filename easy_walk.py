@@ -29,7 +29,7 @@ import prm_graph
 # TODO: check if we can avoid to set a sleep after each movement command
 # TODO: change the folder destination of the name download of graph
 
-def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0):
+def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0, max_valid_dist=0.2):
     """
     Check if there's a clear line of sight between two points.
     Uses sampling along the line to check for obstacles.
@@ -49,11 +49,15 @@ def check_line_of_sight(x1, y1, x2, y2, pts, cells, obstacle_threshold=0.0):
         # Find nearest grid point
         distances = np.sqrt((pts[:, 0] - check_x) ** 2 + (pts[:, 1] - check_y) ** 2)
         nearest_idx = np.argmin(distances)
+        min_dist = distances[nearest_idx]
+
+        if min_dist > max_valid_dist:
+            return 'unseen'
 
         if cells[nearest_idx] < obstacle_threshold:
-            return False  # Path blocked
+            return 'blocked'  # Path blocked
 
-    return True  # Path clear
+    return 'clear'  # Path clear
 
 def sample_cell_points(env, cell_row, cell_col, num_samples=200):
     """Sample random points within a cell."""
@@ -443,35 +447,23 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
     path = prm_graph.find_path_dijkstra(start_id, goal_id)
 
-    
 
-    if target_x is None or target_y is None:
-        print(f"[FAIL] No clear path found to cell ({target_row},{target_col}) from current position")
-        visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
-                                       {'rejected': rejected_samples, 'valid': []}, None, 0, env)
-        return False
 
-    save_path = os.path.join(mission_folder,
-                             f"iteration_{iteration}_cell_{target_row}_{target_col}.png") if mission_folder else None
-    visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
-                                   {'rejected': rejected_samples, 'valid': valid_samples}, (target_x, target_y),
-                                   iteration, env, save_path)
+    #TODO: Start new loop to check all the edges during the walk. In this part is important walk in async mode.
 
-    dx, dy = target_x - robot_x, target_y - robot_y
-    distance = np.sqrt(dx ** 2 + dy ** 2)
-    target_yaw = np.arctan2(dy, dx)
+    # if target_x is None or target_y is None:
+    #     print(f"[FAIL] No clear path found to cell ({target_row},{target_col}) from current position")
+    #     visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
+    #                                    {'rejected': rejected_samples, 'valid': []}, None, 0, env)
+    #     return False
+    #
+    # save_path = os.path.join(mission_folder,
+    #                          f"iteration_{iteration}_cell_{target_row}_{target_col}.png") if mission_folder else None
+    # visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
+    #                                {'rejected': rejected_samples, 'valid': valid_samples}, (target_x, target_y),
+    #                                iteration, env, save_path)
 
-    quat = vision_tform_body.rotation
-    current_yaw = np.arctan2(2.0 * (quat.w * quat.z + quat.x * quat.y), 1.0 - 2.0 * (quat.y ** 2 + quat.z ** 2))
-    dyaw = np.arctan2(np.sin(target_yaw - current_yaw), np.cos(target_yaw - current_yaw))
-
-    print("[INFO] Step 1: Rotating to face target...")
-    #FIXME: Try before with relative move and PRM. After that we can try with relative_move_velocity_command.
-    movements.relative_move(0, 0, dyaw, "vision", command_client, robot_state_client)
-    #movements.relative_move_velocity_command(0, 0, 0, command_client, robot_state_client, VISION_FRAME_NAME)
-
-    print(f"[INFO] Step 2: Moving forward {distance:.2f}m...")
-    success_move = movements.relative_move(distance, 0, 0, "vision", command_client, robot_state_client)
+    success_move = navigate_to(target_x, target_y, robot_x, robot_y, robot_state_client, command_client, vision_tform_body)
 
     if success_move:
         x_final, y_final, z_final, _ = spotUtils.getPosition(robot_state_client)
@@ -484,6 +476,25 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
     else:
         print(f"[FAIL] Movement command failed for cell ({target_row},{target_col})")
         return False
+
+def navigate_to(target_x, target_y, robot_x, robot_y, robot_state_client, command_client, vision_tform_body):
+    dx, dy = target_x - robot_x, target_y - robot_y
+    distance = np.sqrt(dx ** 2 + dy ** 2)
+    target_yaw = np.arctan2(dy, dx)
+
+    quat = vision_tform_body.rotation
+    current_yaw = np.arctan2(2.0 * (quat.w * quat.z + quat.x * quat.y), 1.0 - 2.0 * (quat.y ** 2 + quat.z ** 2))
+    dyaw = np.arctan2(np.sin(target_yaw - current_yaw), np.cos(target_yaw - current_yaw))
+
+    print("[INFO] Step 1: Rotating to face target...")
+    # FIXME: Try before with relative move and PRM. After that we can try with relative_move_velocity_command.
+    movements.relative_move(0, 0, dyaw, "vision", command_client, robot_state_client)
+    # movements.relative_move_velocity_command(0, 0, 0, command_client, robot_state_client, VISION_FRAME_NAME)
+
+    print(f"[INFO] Step 2: Moving forward {distance:.2f}m...")
+    success_move = movements.relative_move(distance, 0, 0, "vision", command_client, robot_state_client)
+
+    return success_move
 
 
 def find_new_borders(env, robot_row, robot_col, path, frontier):

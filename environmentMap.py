@@ -15,7 +15,6 @@ class EnvironmentMap(object):
         self.waypoints = []
         self.robot_path = []
 
-
     # def mark_explored_side(self, path=None, target_index=None, robot_row=None, robot_col=None,
     #                        target_row=None, target_col=None):
     #     """
