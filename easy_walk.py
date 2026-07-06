@@ -444,10 +444,18 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
     start_id = global_sampler.get_nearest_points(robot_x, robot_y, 1)
     goal_id = global_sampler.get_nearest_points(target_x, target_y, 1)
-
     path = prm_graph.find_path_dijkstra(start_id, goal_id)
 
-
+    #TODO: check if navigate_to return result if and only if it tries to reach the goal point, or it if returns immediately after sending the command
+    while path is not None:
+        robot_x, robot_y = spotUtils.getPosition(robot_state_client)
+        next_x, next_y = path.pop(0)
+        success_move = navigate_to(next_x, next_y, robot_x, robot_y, robot_state_client, command_client, vision_tform_body)
+        if success_move:
+            print(f"[INFO] Moved to point ({next_x:.2f}, {next_y:.2f})")
+        else:
+            print(f"[FAIL] Movement command failed for point ({next_x:.2f}, {next_y:.2f})")
+            return False
 
     #TODO: Start new loop to check all the edges during the walk. In this part is important walk in async mode.
 
@@ -463,19 +471,19 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
     #                                {'rejected': rejected_samples, 'valid': valid_samples}, (target_x, target_y),
     #                                iteration, env, save_path)
 
-    success_move = navigate_to(target_x, target_y, robot_x, robot_y, robot_state_client, command_client, vision_tform_body)
-
-    if success_move:
-        x_final, y_final, z_final, _ = spotUtils.getPosition(robot_state_client)
-        if env.is_point_in_cell(x_final, y_final, target_row, target_col):
-            print(f"We are in the right cell")
-            return True
-        else:
-            print(f"[FAIL] We are in the wrong cell")
-            return False
-    else:
-        print(f"[FAIL] Movement command failed for cell ({target_row},{target_col})")
-        return False
+    # success_move = navigate_to(target_x, target_y, robot_x, robot_y, robot_state_client, command_client, vision_tform_body)
+    #
+    # if success_move:
+    #     x_final, y_final, z_final, _ = spotUtils.getPosition(robot_state_client)
+    #     if env.is_point_in_cell(x_final, y_final, target_row, target_col):
+    #         print(f"We are in the right cell")
+    #         return True
+    #     else:
+    #         print(f"[FAIL] We are in the wrong cell")
+    #         return False
+    # else:
+    #     print(f"[FAIL] Movement command failed for cell ({target_row},{target_col})")
+    #     return False
 
 def navigate_to(target_x, target_y, robot_x, robot_y, robot_state_client, command_client, vision_tform_body):
     dx, dy = target_x - robot_x, target_y - robot_y
