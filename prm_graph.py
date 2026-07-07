@@ -52,6 +52,20 @@ class PRM:
 
         print(f"[PRM] Added {len(self.nodes)} nodes from global sampler")
 
+    # --- [NEW METHOD] Trova il nodo del grafo più vicino a coordinate (x,y) ---
+    def get_nearest_node(self, x: float, y: float) -> Optional[int]:
+        """Find the ID of the nearest node in the PRM to the given coordinates."""
+        if not self.nodes:
+            return None
+        min_dist = float('inf')
+        nearest_idx = None
+        for idx, (nx, ny) in self.nodes.items():
+            dist = np.sqrt((nx - x)**2 + (ny - y)**2)
+            if dist < min_dist:
+                min_dist = dist
+                nearest_idx = idx
+        return nearest_idx
+
     def build_graph(self):
         """
         Build the PRM graph by connecting nearby nodes.
@@ -201,4 +215,3 @@ class PRM:
 
             del self.nodes[temp_idx]
             del self.edges[temp_idx]
-

@@ -140,3 +140,20 @@ class GlobalSampler:
         self.point_cell_map = {}
         self.sampled = False
 
+    def get_point_in_cell(self, row: int, col: int) -> List[Tuple[float, float]]:
+        """
+        Get all sampled points (x, y) that belong to a specific cell.
+
+        Args:
+            row, col: Cell coordinates
+
+        Returns:
+            List of (x, y) tuples for points in the cell
+        """
+        points_in_cell = []
+        for idx, (px, py) in enumerate(self.global_points):
+            cell_row, cell_col = self.point_cell_map[idx]
+            if cell_row == row and cell_col == col:
+                points_in_cell.append((px, py))
+        return points_in_cell
+
