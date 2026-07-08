@@ -18,7 +18,7 @@ class PRM:
     Uses Dijkstra's algorithm for pathfinding.
     """
 
-    def __init__(self, max_edge_length: float = 2.0, connection_radius: float = 3.0):
+    def __init__(self, max_edge_length: float = 2.0, connection_radius: float = 3.0, min_edge_length: float = 0.5):
         """
         Initialize the PRM.
 
@@ -28,6 +28,7 @@ class PRM:
         """
         self.max_edge_length = max_edge_length
         self.connection_radius = connection_radius
+        self.min_edge_length = min_edge_length
 
         self.nodes = {}  # {point_idx: (x, y)}
         self.edges = {}  # {point_idx: [(neighbor_idx, weight), ...]}
@@ -87,9 +88,8 @@ class PRM:
                 dist = np.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
                 # Only connect if within radius and shorter than max length
-                if dist <= self.connection_radius and dist <= self.max_edge_length:
+                if self.connection_radius >= dist >= self.min_edge_length and dist <= self.max_edge_length:
                     weight = 1.0  # Uniform weight (can be modified for terrain costs)
-
                     # Add bidirectional edges
                     self.edges[idx1].append((idx2, weight))
                     self.edges[idx2].append((idx1, weight))

@@ -62,7 +62,7 @@ def relative_move(dx, dy, dyaw, frame_name, robot_command_client, robot_state_cl
             print(f'Arrived at the goal (traveled {distance_traveled:.2f}m)')
             return True, distance_traveled
 
-        time.sleep(1)
+        #time.sleep(1)
 
 def relative_move_velocity_command(v_x, v_y, v_rot, robot_command_client, robot_state_client, frame_name):
     transforms = robot_state_client.get_robot_state().kinematic_state.transforms_snapshot

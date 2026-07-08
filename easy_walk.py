@@ -21,7 +21,7 @@ import spotLogInUtils
 import environmentMap
 import spotUtils
 #import velodyneClient
-import archVerification
+import arcVerification
 
 import global_sampler
 import prm_graph
@@ -68,7 +68,6 @@ def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cell
     cell_center_x, cell_center_y = cell_center
     rejected_samples = []
 
-    # Forziamo il ritorno esatto del centro geometrico della cella
     return cell_center_x, cell_center_y, target_cell_points, rejected_samples
 
 
@@ -349,7 +348,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
                                      env, target_row, target_col, global_sampler, prm_graph, mission_folder=None,
                                      iteration=0,
                                      recordingInterface=None, verification_tracker=None):
-    """Attempt to enter a target cell from the current robot position."""
+    """Attempt to enter a target cell from the current robot position using background tracking."""
     print(f"\n[ATTEMPT] Trying to enter cell ({target_row},{target_col}) from current position...")
 
     proto = local_grid_client.get_local_grids(['obstacle_distance'])
@@ -366,7 +365,6 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
         return False
 
     transforms_snapshot = local_grid_proto.local_grid.transforms_snapshot
-
     vision_tform_body = get_a_tform_b(transforms_snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME)
     robot_x, robot_y = vision_tform_body.position.x, vision_tform_body.position.y
 
@@ -375,88 +373,136 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
     if target_x is None or target_y is None:
         print(f"[FAIL] No clear path found to cell ({target_row},{target_col}) from current position")
-        visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
-                                       {'rejected': rejected_samples, 'valid': []}, None, 0, env, prm_graph=prm_graph,
-                                       chosen_path=None)
+        # visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
+        #                                {'rejected': rejected_samples, 'valid': []}, None, 0, env, prm_graph=prm_graph,
+        #                                chosen_path=None)
         return False
 
-    # --- Cerchiamo i nodi più vicini direttamente sul PRM ---
+    # --- Calcolo del percorso sul PRM ---
     start_id = prm_graph.get_nearest_node(robot_x, robot_y)
     goal_id = prm_graph.get_nearest_node(target_x, target_y)
     path_ids = prm_graph.find_path_dijkstra(start_id, goal_id)
 
     full_path_coords = None
-    if path_ids is not None:
-        # Recuperiamo e copiamo la lista completa di coordinate prima di modificarla
-        full_path_coords = [prm_graph.get_node_position(nid) for nid in path_ids]
-        path_coords = full_path_coords.copy()
-        if len(path_coords) > 0:
-            path_coords.pop(0)  # Rimuove il primo punto che coincide con la posizione attuale
-    else:
-        path_coords = None
+    path_waypoints = []
 
-    # --- [NEW] SALVATAGGIO MAPPA PRIMA DEL MOVIMENTO CON IL PATH EVIDENZIATO ---
+    if path_ids is not None:
+        full_path_coords = [prm_graph.get_node_position(nid) for nid in path_ids]
+
+        for nid in path_ids:
+            nx, ny = prm_graph.get_node_position(nid)
+            path_waypoints.append((nid, nx, ny))
+
+        if len(path_waypoints) > 0:
+            path_waypoints.pop(0)  # Rimuove il primo punto (posizione attuale)
+    else:
+        path_waypoints = None
+
+    # --- Salvataggio mappa prima del movimento ---
     save_path = os.path.join(mission_folder,
                              f"iteration_{iteration}_cell_{target_row}_{target_col}.png") if mission_folder else None
 
-    visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
-                                   {'rejected': rejected_samples, 'valid': valid_samples}, (target_x, target_y),
-                                   iteration, env, save_path, prm_graph=prm_graph, chosen_path=full_path_coords)
+    # visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
+    #                                {'rejected': rejected_samples, 'valid': valid_samples}, (target_x, target_y),
+    #                                iteration, env, save_path, prm_graph=prm_graph, chosen_path=full_path_coords)
 
-    # Navighiamo attraverso i punti waypoint reali con VERIFICA DEGLI ARCHI
-    while path_coords and len(path_coords) > 0:
+    # --- Ciclo di navigazione waypoint per waypoint ---
+    while path_waypoints and len(path_waypoints) > 0:
         robot_x, robot_y, _, _ = spotUtils.getPosition(robot_state_client)
+        current_node_id = prm_graph.get_nearest_node(robot_x, robot_y)
+        next_node_id, next_x, next_y = path_waypoints[0]
 
-        # 1. Scarica la griglia locale aggiornata a ogni step per avere l'ultimo FOV
-        proto_updated = local_grid_client.get_local_grids(['obstacle_distance'])
-        pts_updated, cells_obs_updated, _ = spotGrid.create_vtk_obstacle_grid(proto_updated, robot_state_client)
+        # 1. AGGIORNA IL TRACKER
+        tracker_payload = [(current_node_id, robot_x, robot_y)] + path_waypoints
+        verification_tracker.update_path(tracker_payload)
 
-        # Prossimo waypoint da raggiungere
-        next_x, next_y = path_coords[0]
+        # 2. STAMPA LIVE DELLO STATO DEL THREAD SECONDARIO
+        # Estraiamo una copia del path dal tracker per vedere lo stato assegnato ad ogni arco
+        print("\n================ [LIVE TRACKER MONITOR] ================")
+        current_tracker_path = verification_tracker.get_path_copy()
+        for idx, (nid, nx, ny, status) in enumerate(current_tracker_path):
+            if idx == 0:
+                print(f" -> [POS ATTUALE ROBOT] Nodo ID: {nid} ({nx:.2f}, {ny:.2f})")
+            else:
+                status_str = "ATTESA VERIFICA ⏳" if status is None else ("LIBERO ✅" if status is True else "BLOCCATO ❌")
+                print(f"    Segmento {idx}: Verso Nodo ID: {nid} ({nx:.2f}, {ny:.2f}) -> {status_str}")
+        print("========================================================\n")
 
-        # Trova gli ID dei nodi sul grafo PRM per il tracking
-        arc_node1 = prm_graph.get_nearest_node(robot_x, robot_y)
-        arc_node2 = prm_graph.get_nearest_node(next_x, next_y)
+        # 3. VERIFICA E ATTESA SICURA SULL'ARCO CORRENTE
+        print(f"[INFO] Controllo sicurezza arco corrente: {current_node_id} -> {next_node_id}")
 
-        # 2. Controllo immediato se l'arco è noto come bloccato
-        if verification_tracker.is_arc_blocked(arc_node1, arc_node2):
-            print(f"[FAIL] Arco {arc_node1}-{arc_node2} è BLOCCATO. Interruzione percorso.")
+        # Se l'arco è già noto come bloccato dal tracker, ci fermiamo subito
+        if verification_tracker.is_arc_blocked(current_node_id, next_node_id):
+            print(f"[FAIL] L'arco corrente {current_node_id}-{next_node_id} è BLOCCATO. Interruzione percorso!")
             return False
 
-        # 3. Se l'arco NON è ancora verificato, facciamo il check visivo
-        if not verification_tracker.is_arc_verified(arc_node1, arc_node2):
-            status = archVerification.verify_arc_safety(robot_x, robot_y, next_x, next_y, pts_updated,
-                                                        cells_obs_updated)
+        # Se non è ancora verificato come libero, entriamo in un loop di attesa sicuro con timeout
+        if not verification_tracker.is_arc_verified(current_node_id, next_node_id):
+            print(
+                f"[INFO] L'arco {current_node_id}-{next_node_id} non è ancora verificato. Attesa elaborazione background...")
 
-            if status == 'clear':
-                verification_tracker.mark_arc_verified(arc_node1, arc_node2)
-                print(f"[ARC-VERIFY] Arco {arc_node1}-{arc_node2} verificato e LIBERO.")
+            timeout = 4.0  # Secondi massimi di attesa
+            start_wait = time.time()
+            abort_mission = False
+            verified_clear = False
 
-            elif status == 'blocked':
-                verification_tracker.mark_arc_blocked(arc_node1, arc_node2)
-                print(f"[FAIL] Ostacolo rilevato sull'arco {arc_node1}-{arc_node2}. Interruzione.")
+            while time.time() - start_wait < timeout:
+                if verification_tracker.is_arc_blocked(current_node_id, next_node_id):
+                    print(f"[FAIL] Il thread secondario ha rilevato l'arco come BLOCCATO durante l'attesa!")
+                    abort_mission = True
+                    break
+                if verification_tracker.is_arc_verified(current_node_id, next_node_id):
+                    verified_clear = True
+                    break
+                time.sleep(0.1)  # Evita di saturare la CPU
+
+            if abort_mission:
                 return False
 
-        next_x, next_y = path_coords.pop(0)  # Ora possiamo rimuoverlo dalla coda
+            # Se scatta il timeout (es. l'arco è fuori dal FOV locale e il tracker non lo analizza)
+            if not verified_clear:
+                print(f"[WARNING] Timeout di attesa superato. Eseguo un controllo istantaneo di fallback...")
+                proto_fallback = local_grid_client.get_local_grids(['obstacle_distance'])
+                pts_fb, cells_fb, _ = spotGrid.create_vtk_obstacle_grid(proto_fallback, robot_state_client)
 
-        # Otteniamo l'ultima transform per il movimento
+                # Controllo manuale al volo usando le funzioni di arcVerification
+                if arcVerification.is_arc_in_fov(robot_x, robot_y, next_x, next_y, pts_fb):
+                    safety_status = arcVerification.verify_arc_safety(robot_x, robot_y, next_x, next_y, pts_fb,
+                                                                      cells_fb)
+                    if safety_status == 'blocked':
+                        print(f"[FAIL] Fallback manuale: Rilevato ostacolo sull'arco. Interruzione!")
+                        return False
+                    elif safety_status == 'clear':
+                        print(f"[OK] Fallback manuale: L'arco è libero. Procedo.")
+                else:
+                    # Se non è nemmeno nel FOV (es. alle spalle del robot), ci fidiamo del PRM globale per questa frazione
+                    print(
+                        f"[WARNING] L'arco non è nel FOV locale delle telecamere. Procedo con cautela basandomi sul PRM.")
+
+        print(f"[OK] Arco {current_node_id}-{next_node_id} pronto per essere percorso.")
+
+        # Aggiornamento finale della griglia locale prima del movimento effettivo
+        proto_updated = local_grid_client.get_local_grids(['obstacle_distance'])
+        if not proto_updated:
+            print("[ERROR] Impossibile aggiornare la griglia locale")
+            return False
+
         vision_tform_body_current = get_a_tform_b(proto_updated[0].local_grid.transforms_snapshot, VISION_FRAME_NAME,
                                                   BODY_FRAME_NAME)
 
+        # Eseguiamo lo spostamento effettivo verso il waypoint
         success_move = navigate_to(next_x, next_y, robot_x, robot_y, robot_state_client, command_client,
                                    vision_tform_body_current)
 
         if success_move:
             print(f"[INFO] Spostamento completato su ({next_x:.2f}, {next_y:.2f})")
+            path_waypoints.pop(0)  # Rimuoviamo il waypoint completato con successo dalla coda
         else:
             print(f"[FAIL] Comando di movimento fallito per ({next_x:.2f}, {next_y:.2f})")
             return False
 
     robot_x, robot_y, _, _ = spotUtils.getPosition(robot_state_client)
-    if env.is_point_in_cell(robot_x, robot_y, target_row, target_col):
-        return True
-    else:
-        return False
+    return env.is_point_in_cell(robot_x, robot_y, target_row, target_col)
 
 def navigate_to(target_x, target_y, robot_x, robot_y, robot_state_client, command_client, vision_tform_body):
     dx, dy = target_x - robot_x, target_y - robot_y
@@ -515,7 +561,7 @@ def easy_walk(options):
         start_row, start_col = 0, 0
         recordingInterface.create_default_waypoint(cell_row=start_row, cell_col=start_col)
 
-        env = environmentMap.EnvironmentMap(rows=3, cols=5, cell_size=3)
+        env = environmentMap.EnvironmentMap(rows=3, cols=5, cell_size=1.5)
 
         # --- [FIX CRUCIALE] Ricaviamo la posizione di boot PRIMA di configurare ed elaborare il grafo PRM ---
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
@@ -523,10 +569,10 @@ def easy_walk(options):
                               1.0 - 2.0 * (quat_boot.y ** 2 + quat_boot.z ** 2))
         env.set_origin(x_boot, y_boot, yaw_boot, start_row=start_row, start_col=start_col)
 
-        gb_sampler = global_sampler.GlobalSampler(env, 3)
+        gb_sampler = global_sampler.GlobalSampler(env, 10)
         gb_sampler.sample_global_grid()
 
-        prm = prm_graph.PRM(max_edge_length=1, connection_radius=3)
+        prm = prm_graph.PRM(max_edge_length=2, connection_radius=2)
         prm.add_nodes_from_sampler(gb_sampler)
 
         # [NEW] Inseriamo il punto iniziale (Boot Node) dentro la lista dei nodi permanenti prima di generare gli archi
@@ -543,10 +589,9 @@ def easy_walk(options):
                     current_max_id += 1
                     prm.add_node(current_max_id, world_pos[0], world_pos[1])
 
-        # Costruiamo il grafo finale ADESSO: in questo modo collegherà in automatico
-        # sia i nodi del campionatore che il punto iniziale ed i centri cella!
         prm.build_graph()
-        verification_tracker = archVerification.ArcVerificationTracker()
+        verification_tracker = arcVerification.ArcVerificationTracker(robot)
+        verification_tracker.start()
 
         mission_timestamp = datetime.now().strftime("Mission_%d-%m-%Y_%H-%M-%S")
         base_graph_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "graph")
