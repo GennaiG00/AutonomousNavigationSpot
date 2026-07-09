@@ -373,9 +373,9 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
     if target_x is None or target_y is None:
         print(f"[FAIL] No clear path found to cell ({target_row},{target_col}) from current position")
-        # visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
-        #                                {'rejected': rejected_samples, 'valid': []}, None, 0, env, prm_graph=prm_graph,
-        #                                chosen_path=None)
+        visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
+                                       {'rejected': rejected_samples, 'valid': []}, None, 0, env, prm_graph=prm_graph,
+                                       chosen_path=None)
         return False
 
     # --- Calcolo del percorso sul PRM ---
@@ -398,13 +398,12 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
     else:
         path_waypoints = None
 
-    # --- Salvataggio mappa prima del movimento ---
     save_path = os.path.join(mission_folder,
                              f"iteration_{iteration}_cell_{target_row}_{target_col}.png") if mission_folder else None
 
-    # visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
-    #                                {'rejected': rejected_samples, 'valid': valid_samples}, (target_x, target_y),
-    #                                iteration, env, save_path, prm_graph=prm_graph, chosen_path=full_path_coords)
+    visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
+                                   {'rejected': rejected_samples, 'valid': valid_samples}, (target_x, target_y),
+                                   iteration, env, save_path, prm_graph=prm_graph, chosen_path=full_path_coords)
 
     # --- Ciclo di navigazione waypoint per waypoint ---
     while path_waypoints and len(path_waypoints) > 0:
@@ -441,7 +440,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
             print(
                 f"[INFO] L'arco {current_node_id}-{next_node_id} non è ancora verificato. Attesa elaborazione background...")
 
-            timeout = 4.0  # Secondi massimi di attesa
+            timeout = 4.0
             start_wait = time.time()
             abort_mission = False
             verified_clear = False
@@ -454,7 +453,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
                 if verification_tracker.is_arc_verified(current_node_id, next_node_id):
                     verified_clear = True
                     break
-                time.sleep(0.1)  # Evita di saturare la CPU
+                time.sleep(0.1)
 
             if abort_mission:
                 return False
@@ -496,7 +495,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
         if success_move:
             print(f"[INFO] Spostamento completato su ({next_x:.2f}, {next_y:.2f})")
-            path_waypoints.pop(0)  # Rimuoviamo il waypoint completato con successo dalla coda
+            path_waypoints.pop(0)
         else:
             print(f"[FAIL] Comando di movimento fallito per ({next_x:.2f}, {next_y:.2f})")
             return False
@@ -519,7 +518,7 @@ def navigate_to(target_x, target_y, robot_x, robot_y, robot_state_client, comman
     # movements.relative_move_velocity_command(0, 0, 0, command_client, robot_state_client, VISION_FRAME_NAME)
 
     print(f"[INFO] Step 2: Moving forward {distance:.2f}m...")
-    success_move = movements.relative_move(distance, 0, 0, "vision", command_client, robot_state_client)
+    success_move, _ = movements.relative_move(distance, 0, 0, "vision", command_client, robot_state_client)
 
     return success_move
 
@@ -572,7 +571,7 @@ def easy_walk(options):
         gb_sampler = global_sampler.GlobalSampler(env, 10)
         gb_sampler.sample_global_grid()
 
-        prm = prm_graph.PRM(max_edge_length=2, connection_radius=2)
+        prm = prm_graph.PRM(max_edge_length=1, connection_radius=4, min_edge_length=0.2)
         prm.add_nodes_from_sampler(gb_sampler)
 
         # [NEW] Inseriamo il punto iniziale (Boot Node) dentro la lista dei nodi permanenti prima di generare gli archi

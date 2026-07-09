@@ -57,32 +57,16 @@ def relative_move(dx, dy, dyaw, frame_name, robot_command_client, robot_state_cl
             return False, distance_traveled
 
         traj_feedback = mobility_feedback.se2_trajectory_feedback
-        if (traj_feedback.status == traj_feedback.STATUS_AT_GOAL and
-                traj_feedback.body_movement_status == traj_feedback.BODY_STATUS_SETTLED):
+        if traj_feedback.status == traj_feedback.STATUS_AT_GOAL:
             print(f'Arrived at the goal (traveled {distance_traveled:.2f}m)')
             return True, distance_traveled
 
-        #time.sleep(1)
 
 def relative_move_velocity_command(v_x, v_y, v_rot, robot_command_client, robot_state_client, frame_name):
-    transforms = robot_state_client.get_robot_state().kinematic_state.transforms_snapshot
-
-    initial_tform_body = get_se2_a_tform_b(transforms, frame_name, BODY_FRAME_NAME)
-    initial_x = initial_tform_body.x
-    initial_y = initial_tform_body.y
-
     obstacle_params = spot_command_pb2.ObstacleParams(disable_vision_foot_obstacle_avoidance=True)
     mobility_params = spot_command_pb2.MobilityParams(obstacle_params=obstacle_params)
 
     cmd = RobotCommandBuilder.synchro_velocity_command(v_x=v_x, v_y=v_y, v_rot=v_rot, params=mobility_params)
 
-    robot_command_client.robot_command(command=cmd, end_time_secs=time.time() + 1.0)
-
-    current_state = robot_state_client.get_robot_state()
-    current_transforms = current_state.kinematic_state.transforms_snapshot
-    current_tform_body = get_se2_a_tform_b(current_transforms, frame_name, BODY_FRAME_NAME)
-
-    distance_traveled = np.sqrt((current_tform_body.x - initial_x) ** 2 +
-                                (current_tform_body.y - initial_y) ** 2)
-
-    return distance_traveled
+    # Il comando viene lanciato. Timeout di sicurezza a 1 secondo in caso di perdita del segnale.
+    robot_command_client.robot_command(command=cmd, end_time_secs=time.time() + 3.0)
