@@ -53,7 +53,6 @@ class PRM:
 
         print(f"[PRM] Added {len(self.nodes)} nodes from global sampler")
 
-    # --- [NEW METHOD] Trova il nodo del grafo più vicino a coordinate (x,y) ---
     def get_nearest_node(self, x: float, y: float) -> Optional[int]:
         """Find the ID of the nearest node in the PRM to the given coordinates."""
         if not self.nodes:

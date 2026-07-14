@@ -11,7 +11,6 @@ import bosdyn.client.util
 import bosdyn.geometry
 from bosdyn.client.frame_helpers import *
 from bosdyn.client.robot_command import (RobotCommandBuilder, RobotCommandClient, blocking_stand)
-from bosdyn.client.local_grid import LocalGridClient
 from bosdyn.client.frame_helpers import get_a_tform_b
 from types import SimpleNamespace
 import navGraphUtils
@@ -344,26 +343,15 @@ def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, rob
         plt.close(fig2)
 
 
-def attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client,
+def attempt_enter_cell_from_position(local_grid, robot_state_client, command_client,
                                      env, target_row, target_col, global_sampler, prm_graph, mission_folder=None,
                                      iteration=0,
                                      recordingInterface=None, verification_tracker=None):
     """Attempt to enter a target cell from the current robot position using background tracking."""
     print(f"\n[ATTEMPT] Trying to enter cell ({target_row},{target_col}) from current position...")
 
-    proto = local_grid_client.get_local_grids(['obstacle_distance'])
-    pts, cells_obstacle_dist, color = spotGrid.create_vtk_obstacle_grid(proto, robot_state_client)
 
-    local_grid_proto = None
-    for local_grid_found in proto:
-        if local_grid_found.local_grid_type_name == 'obstacle_distance':
-            local_grid_proto = local_grid_found
-            break
-
-    if local_grid_proto is None:
-        print("[ERROR] No 'obstacle_distance' grid found")
-        return False
-
+    pts, cells_obstacle_dist, color, local_grid_proto , _= local_grid.return_local_grid('obstacle_distance', robot_state_client)
     transforms_snapshot = local_grid_proto.local_grid.transforms_snapshot
     vision_tform_body = get_a_tform_b(transforms_snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME)
     robot_x, robot_y = vision_tform_body.position.x, vision_tform_body.position.y
@@ -461,10 +449,8 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
             # Se scatta il timeout (es. l'arco è fuori dal FOV locale e il tracker non lo analizza)
             if not verified_clear:
                 print(f"[WARNING] Timeout di attesa superato. Eseguo un controllo istantaneo di fallback...")
-                proto_fallback = local_grid_client.get_local_grids(['obstacle_distance'])
-                pts_fb, cells_fb, _ = spotGrid.create_vtk_obstacle_grid(proto_fallback, robot_state_client)
+                pts_fb, cells_fb, _, _, _=local_grid.return_local_grid('obstacle_distance', robot_state_client)
 
-                # Controllo manuale al volo usando le funzioni di arcVerification
                 if arcVerification.is_arc_in_fov(robot_x, robot_y, next_x, next_y, pts_fb):
                     safety_status = arcVerification.verify_arc_safety(robot_x, robot_y, next_x, next_y, pts_fb,
                                                                       cells_fb)
@@ -480,8 +466,7 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
 
         print(f"[OK] Arco {current_node_id}-{next_node_id} pronto per essere percorso.")
 
-        # Aggiornamento finale della griglia locale prima del movimento effettivo
-        proto_updated = local_grid_client.get_local_grids(['obstacle_distance'])
+        _,_,_,_,proto_updated = local_grid.return_local_grid('obstacle_distance', robot_state_client)
         if not proto_updated:
             print("[ERROR] Impossibile aggiornare la griglia locale")
             return False
@@ -489,7 +474,6 @@ def attempt_enter_cell_from_position(local_grid_client, robot_state_client, comm
         vision_tform_body_current = get_a_tform_b(proto_updated[0].local_grid.transforms_snapshot, VISION_FRAME_NAME,
                                                   BODY_FRAME_NAME)
 
-        # Eseguiamo lo spostamento effettivo verso il waypoint
         success_move = navigate_to(next_x, next_y, robot_x, robot_y, robot_state_client, command_client,
                                    vision_tform_body_current)
 
@@ -536,14 +520,13 @@ def find_new_borders(env, robot_row, robot_col, path, frontier):
 def easy_walk(options):
     robot, lease_client, robot_state_client, client_metadata = spotLogInUtils.setLogInfo(options)
     estop = spotLogInUtils.SimpleEstop(robot, options.name + "_estop")
-
+    local_grid = spotGrid.LocalGrid(robot)
     recordingInterface = navGraphUtils.RecordingInterface(robot, options.download_filepath, client_metadata)
     recordingInterface.stop_recording()
     recordingInterface.clear_map()
 
     with bosdyn.client.lease.LeaseKeepAlive(lease_client, must_acquire=True, return_at_exit=True):
         command_client = robot.ensure_client(RobotCommandClient.default_service_name)
-        local_grid_client = robot.ensure_client(LocalGridClient.default_service_name)
         robot.time_sync.wait_for_sync()
         robot.logger.info('Powering on robot...')
         robot.power_on()
@@ -624,21 +607,35 @@ def easy_walk(options):
 
             if len(borders_in_frontier) != 0:
                 selected_border = min(borders_in_frontier, key=lambda b: b[2])
-                check = attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client, env,
+                check = attempt_enter_cell_from_position(local_grid, robot_state_client, command_client, env,
                                                          selected_border[0], selected_border[1], gb_sampler, prm,
                                                          mission_folder,
                                                          visualization_counter, recordingInterface, verification_tracker)
                 visualization_counter += 1
                 frontier.remove(selected_border)
-
+                x_new, y_new, _, _ = spotUtils.getPosition(robot_state_client)
+                robot_row, robot_col = env.get_cell_from_world(x_new, y_new)
                 if check:
                     env.update_position(x, y)
                     recordingInterface.create_default_waypoint(cell_row=selected_border[0], cell_col=selected_border[1])
                     env.add_waypoint(x, y)
                     env.mark_cell_visited(selected_border[0], selected_border[1])
-                    x_new, y_new, _, _ = spotUtils.getPosition(robot_state_client)
-                    robot_row, robot_col = env.get_cell_from_world(x_new, y_new)
                     frontier.extend(find_new_borders(env, robot_row, robot_col, path, frontier))
+                else:
+                    #TODO qui se non ho trovato il percorso e devo verificare se sono dentro la cella esatta o meno
+                    if selected_border == (robot_row, robot_col):
+                        env.update_position(x, y)
+                        recordingInterface.create_default_waypoint(cell_row=selected_border[0],
+                                                                   cell_col=selected_border[1])
+                        env.add_waypoint(x, y)
+                        env.mark_cell_visited(selected_border[0], selected_border[1])
+                        frontier.extend(find_new_borders(env, robot_row, robot_col, path, frontier))
+                        #TODO qui sono dentro la cella ma n on sono arrivato nel punto desiderato e quindi va bene lo stesso
+                    else:
+                        #TODO qui niente fallisco vuol dire nemmeno sono entrato nella cella e quindi procedo con il normale algoritmo
+                        #devo però controllare che ci se ho già trovato un path allora provo a trovarne un altro che sta sotto un certo costo
+                        #se non ho trovato nessun path libero all'inizio (o perchè il corsto è elevato o perchè è tutto bloccato) allora proedo normale
+                        #se invece era partito e dopo non ha trovato gli elementi, deve andare a cercare un altro percorso sempre che abbia un costo minore di una certa soglia
             else:
                 lowest_rank_cell = env.get_lowest_rank_from_frontier_list(frontier, path)
                 if lowest_rank_cell is not None:
@@ -655,7 +652,7 @@ def easy_walk(options):
 
                     if navigation_success:
                         recordingInterface.start_recording()
-                        check = attempt_enter_cell_from_position(local_grid_client, robot_state_client, command_client,
+                        check = attempt_enter_cell_from_position(local_grid, robot_state_client, command_client,
                                                                  env, target_row, target_col, gb_sampler, prm,
                                                                  mission_folder,
                                                                  visualization_counter, recordingInterface, verification_tracker)

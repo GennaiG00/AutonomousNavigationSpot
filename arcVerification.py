@@ -1,7 +1,6 @@
 import threading
 
 from bosdyn.client.async_tasks import AsyncPeriodicQuery, AsyncTasks
-from bosdyn.client.local_grid import LocalGridClient
 from bosdyn.client.robot_state import RobotStateClient
 
 import spotUtils
@@ -33,7 +32,7 @@ class ArcVerificationTracker:
         self.verified_arcs = set()
         self.blocked_arcs = set()
         self._robot_state_client = self.robot.ensure_client(RobotStateClient.default_service_name)
-        self._local_grid_client = self.robot.ensure_client(LocalGridClient.default_service_name)
+        self._local_grid = spotGrid.LocalGrid(self.robot)
         self.path = []
         self.path_lock = threading.Lock()
         self._running = False
@@ -99,8 +98,7 @@ class ArcVerificationTracker:
                 continue
 
             try:
-                proto = self._local_grid_client.get_local_grids(['obstacle_distance'])
-                pts, cells_obstacle_dist, _ = spotGrid.create_vtk_obstacle_grid(proto, self._robot_state_client)
+                pts, cells_obstacle_dist, _, _, proto = self._local_grid.return_local_grid('obstacle_distance', robot_state_client=self._robot_state_client)
             except Exception as e:
                 LOGGER.error(f"Errore nel recupero dati sensori/stato: {e}")
                 time.sleep(0.2)
