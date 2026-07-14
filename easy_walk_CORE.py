@@ -353,7 +353,7 @@ def easy_walk(options):
         # Create first waypoint in initial cell (wp_0)
         recordingInterface.create_default_waypoint(cell_row=start_row, cell_col=start_col)
         #TODO Controlla che il branch sia quello giusto
-        env = environmentMap.EnvironmentMap(rows=3, cols=5, cell_size=2)
+        env = environmentMap.EnvironmentMap(rows=7, cols=7, cell_size=2)
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
 
         yaw_boot = np.arctan2(2.0 * (quat_boot.w * quat_boot.z + quat_boot.x * quat_boot.y),
@@ -560,7 +560,7 @@ def easy_walk(options):
         recordingInterface.navigate_to_first_waypoint(robot_state_client)
 
         command_client.robot_command(RobotCommandBuilder.synchro_sit_command(), end_time_secs=time.time() + 20)
-        # sleep(3)
+        sleep(3)
         robot.power_off(cut_immediately=False)
 
         # Save the final map to disk (includes return path optimization)

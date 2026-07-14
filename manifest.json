@@ -1,11 +1,9 @@
 {
-  "extension_name": "autonomous_mission",
-  "description": "This extension allows the robot to autonomously navigate through a mission map using a graph-based approach.",
+  "name": "easy_walk_short",
+  "description": "This extension allows the robot to autonomously navigate through a mission map using a graph-based approach (Short Version).",
   "version": "0.0.0",
-  "images": ["autonomous_mission.tgz"],
-  "installation_target": [
-    "CORE_IO"
-  ],
+  "images": ["easy_walk_short.tar.gz"],
+  "installation_target": "spot",
   "directories_to_save": [
     "/app/graph",
     "/app/MissionMap",

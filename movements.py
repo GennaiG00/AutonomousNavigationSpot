@@ -58,9 +58,8 @@ def relative_move(dx, dy, dyaw, frame_name, robot_command_client, robot_state_cl
             return False, distance_traveled
 
         traj_feedback = mobility_feedback.se2_trajectory_feedback
-        if (traj_feedback.status == traj_feedback.STATUS_AT_GOAL and
-                traj_feedback.body_movement_status == traj_feedback.BODY_STATUS_SETTLED):
+        if (traj_feedback.status == traj_feedback.STATUS_AT_GOAL):
             print(f'Arrived at the goal (traveled {distance_traveled:.2f}m)')
             return True, distance_traveled
 
-        time.sleep(1)
+        #time.sleep(1)
