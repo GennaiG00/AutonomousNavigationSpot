@@ -50,6 +50,8 @@ def relative_move(dx, dy, dyaw, frame_name, robot_command_client, robot_state_cl
 
         # Calculate distance traveled
         distance_traveled = np.sqrt((current_tform_body.x - initial_x) ** 2 +
+
+
                                     (current_tform_body.y - initial_y) ** 2)
 
         if mobility_feedback.status != RobotCommandFeedbackStatus.STATUS_PROCESSING:
