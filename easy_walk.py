@@ -70,277 +70,164 @@ def find_best_point_in_cell(robot_x, robot_y, env, cell_row, cell_col, pts, cell
     return cell_center_x, cell_center_y, target_cell_points, rejected_samples
 
 
-# def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
-#                                    candidates, chosen_point, iteration, env=None, save_path=None, prm_graph=None, chosen_path=None):
-#     """
-#     Visualize the obstacle-distance grid with sampled candidates, chosen point, PRM Graph, and Chosen Path.
-#     """
-#     import matplotlib.pyplot as plt
-#     import matplotlib.patches as patches
-#
-#     fig, ax = plt.subplots(figsize=(14, 12))
-#
-#     x = pts[:, 0]
-#     y = pts[:, 1]
-#     PADDING_THRESHOLD = 0.15
-#
-#     # --- Disegna PRM graph (nodi + archi) sulla mappa LOCALE se fornito ---
-#     if prm_graph is not None and hasattr(prm_graph, 'nodes'):
-#         # Disegna i nodi (puntini neri)
-#         for nid, (nx, ny) in prm_graph.nodes.items():
-#             ax.plot(nx, ny, 'k.', markersize=3, alpha=0.5, zorder=1)
-#
-#         # Disegna gli archi (linee grigie sottili)
-#         if hasattr(prm_graph, 'edges'):
-#             for node_id, edges in prm_graph.edges.items():
-#                 if node_id in prm_graph.nodes:
-#                     nx1, ny1 = prm_graph.nodes[node_id]
-#                     for neighbor_id in edges:
-#                         if neighbor_id in prm_graph.nodes:
-#                             nx2, ny2 = prm_graph.nodes[neighbor_id]
-#                             ax.plot([nx1, nx2], [ny1, ny2], color='gray', linewidth=0.5, alpha=0.3, zorder=1)
-#
-#     # --- [NEW] Disegna il path scelto sulla mappa LOCALE ---
-#     if chosen_path is not None and len(chosen_path) > 1:
-#         path_x = [p[0] for p in chosen_path if p is not None]
-#         path_y = [p[1] for p in chosen_path if p is not None]
-#         ax.plot(path_x, path_y, color='magenta', linewidth=4.0, linestyle='-', zorder=6, label='Chosen PRM Path')
-#         ax.plot(path_x, path_y, 'mo', markersize=8, markeredgecolor='white', zorder=7)
-#
-#     # Calculate local grid bounds
-#     local_x_min, local_x_max = x.min(), x.max()
-#     local_y_min, local_y_max = y.min(), y.max()
-#
-#     if env is not None:
-#         for row in range(env.rows):
-#             for col in range(env.cols):
-#                 world_pos = env.get_world_position_from_cell(row, col)
-#                 if world_pos is None: continue
-#                 cell_x, cell_y = world_pos
-#
-#                 margin = env.cell_size
-#                 if not (local_x_min - margin <= cell_x <= local_x_max + margin and
-#                         local_y_min - margin <= cell_y <= local_y_max + margin):
-#                     continue
-#
-#                 half_size = env.cell_size / 2.0
-#                 grid_corners = [(-half_size, -half_size), (half_size, -half_size), (half_size, half_size),
-#                                 (-half_size, half_size)]
-#                 cos_yaw, sin_yaw = np.cos(env.origin_yaw), np.sin(env.origin_yaw)
-#                 world_corners = []
-#                 for gx, gy in grid_corners:
-#                     wx = cell_x + (gx * cos_yaw - gy * sin_yaw)
-#                     wy = cell_y + (gx * sin_yaw + gy * cos_yaw)
-#                     world_corners.append((wx, wy))
-#
-#                 cell_status, _ = env.get_cell_status(row, col) if len(env.get_cell_status(row, col)) == 2 else (
-#                     env.get_cell_status(row, col), None)
-#                 if cell_status == 1:
-#                     rect = patches.Polygon(world_corners, linewidth=2, edgecolor='darkgreen', facecolor='lightgreen',
-#                                            alpha=0.3, zorder=2)
-#                 elif cell_status == -1:
-#                     rect = patches.Polygon(world_corners, linewidth=2, edgecolor='darkred', facecolor='lightcoral',
-#                                            alpha=0.4, zorder=2)
-#                 else:
-#                     rect = patches.Polygon(world_corners, linewidth=1.5, edgecolor='gray', facecolor='none', alpha=0.6,
-#                                            linestyle='--', zorder=2)
-#                 ax.add_patch(rect)
-#                 ax.text(cell_x, cell_y, f'{row},{col}', ha='center', va='center', fontsize=7, color='black',
-#                         weight='bold', zorder=3, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
-#
-#     if 'rejected' in candidates:
-#         for point in candidates['rejected']:
-#             ax.plot(point[0], point[1], 'rx', markersize=10, markeredgewidth=2.5, zorder=5)
-#
-#     if 'valid' in candidates:
-#         for point in candidates['valid']:
-#             ax.plot(point[0], point[1], 'yo', markersize=10, markerfacecolor='yellow', markeredgewidth=2,
-#                     markeredgecolor='orange', zorder=5)
-#
-#     if chosen_point is not None:
-#         ax.plot(chosen_point[0], chosen_point[1], 'g*', markersize=25, markeredgewidth=2, label='Target', zorder=6)
-#         target_dist = np.sqrt((chosen_point[0] - robot_x) ** 2 + (chosen_point[1] - robot_y) ** 2)
-#         ax.plot([robot_x, chosen_point[0]], [robot_y, chosen_point[1]], 'g--', linewidth=2.5, alpha=0.8, zorder=4)
-#         mid_x, mid_y = (robot_x + chosen_point[0]) / 2, (robot_y + chosen_point[1]) / 2
-#         ax.text(mid_x, mid_y, f'{target_dist:.2f}m', fontsize=9, color='darkgreen', weight='bold', zorder=6,
-#                 bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.9, edgecolor='darkgreen'))
-#
-#     if type(env.waypoints) != int:
-#         if env is not None and hasattr(env, 'waypoints') and isinstance(env.waypoints, list) and len(env.waypoints) > 0:
-#             visible_waypoints = []
-#             for i, waypoint in enumerate(env.waypoints):
-#                 if not isinstance(waypoint, (tuple, list)): continue
-#                 if type(waypoint) != int and len(waypoint) >= 2:
-#                     wp_x, wp_y = waypoint[0], waypoint[1]
-#                     if (
-#                             local_x_min - 0.5 <= wp_x <= local_x_max + 0.5 and local_y_min - 0.5 <= wp_y <= local_y_max + 0.5):
-#                         visible_waypoints.append((wp_x, wp_y, i))
-#             if isinstance(visible_waypoints, list) and len(visible_waypoints) > 0:
-#                 for wp_x, wp_y, idx in visible_waypoints:
-#                     ax.plot(wp_x, wp_y, 'mo', markersize=12, markerfacecolor='magenta', markeredgewidth=2.5,
-#                             markeredgecolor='purple', zorder=7, label='Waypoints' if idx == 0 else '')
-#                     ax.text(wp_x + 0.12, wp_y + 0.12, f'W{idx + 1}', fontsize=9, color='purple', weight='bold',
-#                             zorder=8,
-#                             bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9, edgecolor='purple'))
-#
-#     if type(env.robot_path) != int:
-#         if env is not None and hasattr(env, 'robot_path') and isinstance(env.robot_path, list) and len(
-#                 env.robot_path) > 0:
-#             all_positions = []
-#             for entry in env.robot_path:
-#                 if not isinstance(entry, (tuple, list)): continue
-#                 if type(entry) != int and len(entry) >= 2:
-#                     pos_x, pos_y = entry[0], entry[1]
-#                     movement_type = entry[2] if len(entry) >= 3 else 'explore'
-#                     if (
-#                             local_x_min - 0.5 <= pos_x <= local_x_max + 0.5 and local_y_min - 0.5 <= pos_y <= local_y_max + 0.5):
-#                         all_positions.append((pos_x, pos_y, movement_type))
-#
-#             if type(all_positions) != int and isinstance(all_positions, list) and len(all_positions) > 1:
-#                 for i in range(len(all_positions) - 1):
-#                     pos1, pos2 = all_positions[i], all_positions[i + 1]
-#                     if pos1[2] == 'navigate' or pos2[2] == 'navigate':
-#                         ax.plot([pos1[0], pos2[0]], [pos1[1], pos2[1]], 'r--', linewidth=2.5, alpha=0.7, zorder=4,
-#                                 label='Navigation' if i == 0 and pos1[2] == 'navigate' else '')
-#                     else:
-#                         ax.plot([pos1[0], pos2[0]], [pos1[1], pos2[1]], 'g-', linewidth=2.5, alpha=0.7, zorder=4,
-#                                 label='Exploration' if i == 0 else '')
-#
-#             for i, (pos_x, pos_y, movement_type) in enumerate(all_positions):
-#                 color_marker = 'orange' if movement_type == 'navigate' else 'lime'
-#                 ax.plot(pos_x, pos_y, 'o', color=color_marker, markersize=5, alpha=0.8, zorder=5)
-#
-#     ax.plot(robot_x, robot_y, 'bo', markersize=18, label='Robot', zorder=7)
-#
-#     for r in [1.0, 2.0]:
-#         circle = patches.Circle((robot_x, robot_y), r, fill=False, linestyle=':', linewidth=1, edgecolor='blue',
-#                                 alpha=0.3, zorder=1)
-#         ax.add_patch(circle)
-#
-#     ax.set_xlim(local_x_min - 0.5, local_x_max + 0.5)
-#     ax.set_ylim(local_y_min - 0.5, local_y_max + 0.5)
-#     ax.set_xlabel('X [m] (VISION)', fontsize=12, fontweight='bold')
-#     ax.set_ylabel('Y [m] (VISION)', fontsize=12, fontweight='bold')
-#     ax.set_title(f'Iteration {iteration}: Robot Path Visualization', fontsize=13, fontweight='bold')
-#     ax.axis('equal')
-#     ax.grid(True, alpha=0.3)
-#     ax.legend(loc='upper right', fontsize=10)
-#     plt.tight_layout()
-#
-#     if save_path:
-#         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-#         print(f"[VISUALIZATION] Saved to: {save_path}")
-#
-#     plt.pause(0.5)
-#     plt.close()
-#
-#     # ------------------------------------------------------------------ #
-#     # SECOND FIGURE: global map
-#     # ------------------------------------------------------------------ #
-#     if env is not None:
-#         ACCUM_RES = 0.05
-#         if not hasattr(env, '_accumulated_pts'):
-#             env._accumulated_pts = {}
-#
-#         if env._accumulated_pts:
-#             accum_keys = np.array(list(env._accumulated_pts.keys()), dtype=np.float32)
-#             accum_wx = accum_keys[:, 0] * ACCUM_RES
-#             accum_wy = accum_keys[:, 1] * ACCUM_RES
-#             accum_colors = np.array(list(env._accumulated_pts.values()), dtype=np.float32) / 255.0
-#         else:
-#             accum_wx = np.array([robot_x], dtype=np.float32)
-#             accum_wy = np.array([robot_y], dtype=np.float32)
-#             accum_colors = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
-#
-#         fig2, ax2 = plt.subplots(figsize=(18, 14))
-#         ax2.scatter(accum_wx, accum_wy, c=accum_colors, s=2, alpha=0.6,
-#                     label='Accumulated Local Grid (obstacle/padding/free)')
-#
-#         # --- Disegna PRM graph (nodi + archi) sulla mappa GLOBALE ---
-#         if prm_graph is not None and hasattr(prm_graph, 'nodes'):
-#             # Nodi sulla mappa globale (punti neri leggermente più grandi)
-#             for nid, (nx, ny) in prm_graph.nodes.items():
-#                 ax2.plot(nx, ny, 'k.', markersize=5, alpha=0.6, zorder=3)
-#
-#             # Archi sulla mappa globale (linee grigie)
-#             if hasattr(prm_graph, 'edges'):
-#                 for node_id, edges in prm_graph.edges.items():
-#                     if node_id in prm_graph.nodes:
-#                         nx1, ny1 = prm_graph.nodes[node_id]
-#                         for neighbor_id in edges:
-#                             if neighbor_id in prm_graph.nodes:
-#                                 nx2, ny2 = prm_graph.nodes[neighbor_id]
-#                                 ax2.plot([nx1, nx2], [ny1, ny2], color='gray', linewidth=0.6, alpha=0.4, zorder=2)
-#
-#         # --- [NEW] Disegna il path scelto sulla mappa GLOBALE ---
-#         if chosen_path is not None and len(chosen_path) > 1:
-#             path_x = [p[0] for p in chosen_path if p is not None]
-#             path_y = [p[1] for p in chosen_path if p is not None]
-#             ax2.plot(path_x, path_y, color='magenta', linewidth=4.0, linestyle='-', zorder=6, label='Chosen PRM Path')
-#             ax2.plot(path_x, path_y, 'mo', markersize=8, markeredgecolor='white', zorder=7)
-#
-#         cos_yaw, sin_yaw = np.cos(env.origin_yaw), np.sin(env.origin_yaw)
-#
-#         for row in range(env.rows):
-#             for col in range(env.cols):
-#                 world_pos = env.get_world_position_from_cell(row, col)
-#                 if world_pos is None: continue
-#                 cell_x, cell_y = world_pos
-#                 half_size = env.cell_size / 2.0
-#
-#                 world_corners = [(cell_x - half_size, cell_y - half_size), (cell_x + half_size, cell_y - half_size),
-#                                  (cell_x + half_size, cell_y + half_size), (cell_x - half_size, cell_y + half_size)]
-#
-#                 cell_status, _ = env.get_cell_status(row, col) if len(env.get_cell_status(row, col)) == 2 else (
-#                     env.get_cell_status(row, col), None)
-#                 if cell_status == 1:
-#                     rect = patches.Polygon(world_corners, linewidth=2, edgecolor='darkgreen', facecolor='lightgreen',
-#                                            alpha=0.3, zorder=2)
-#                 elif cell_status == -1:
-#                     rect = patches.Polygon(world_corners, linewidth=2, edgecolor='darkred', facecolor='lightcoral',
-#                                            alpha=0.4, zorder=2)
-#                 else:
-#                     rect = patches.Polygon(world_corners, linewidth=1.5, edgecolor='gray', facecolor='none', alpha=0.6,
-#                                            linestyle='--', zorder=2)
-#                 ax2.add_patch(rect)
-#                 ax2.text(cell_x, cell_y, f'{row},{col}', ha='center', va='center', fontsize=7, color='black',
-#                          weight='bold', zorder=3, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
-#
-#         if 'rejected' in candidates:
-#             for point in candidates['rejected']: ax2.plot(point[0], point[1], 'rx', markersize=10, markeredgewidth=2.5,
-#                                                           zorder=5)
-#
-#         if 'valid' in candidates:
-#             for point in candidates['valid']: ax2.plot(point[0], point[1], 'yo', markersize=10,
-#                                                        markerfacecolor='yellow', markeredgewidth=2,
-#                                                        markeredgecolor='orange', zorder=5)
-#
-#         if chosen_point is not None:
-#             ax2.plot(chosen_point[0], chosen_point[1], 'g*', markersize=25, markeredgewidth=2, label='Target', zorder=6)
-#             ax2.plot([robot_x, chosen_point[0]], [robot_y, chosen_point[1]], 'g--', linewidth=2.5, alpha=0.8, zorder=4)
-#
-#         rect_local = patches.Rectangle((local_x_min, local_y_min), local_x_max - local_x_min, local_y_max - local_y_min,
-#                                        linewidth=2, edgecolor='cyan', facecolor='none', linestyle='-', alpha=0.8,
-#                                        zorder=6, label='Current local scan')
-#         ax2.add_patch(rect_local)
-#
-#         ax2.set_xlabel('X [m] (VISION)', fontsize=12, fontweight='bold')
-#         ax2.set_ylabel('Y [m] (VISION)', fontsize=12, fontweight='bold')
-#         ax2.set_title(f'Iteration {iteration}: Global Map View (accumulated local scans)', fontsize=13,
-#                       fontweight='bold')
-#         ax2.axis('equal')
-#         ax2.grid(True, alpha=0.3)
-#         ax2.legend(loc='upper right', fontsize=10)
-#         plt.tight_layout()
-#
-#         if save_path:
-#             base, ext = os.path.splitext(save_path)
-#             global_save_path = f"{base}_global{ext}"
-#             fig2.savefig(global_save_path, dpi=150, bbox_inches='tight')
-#             print(f"[VISUALIZATION] Global map saved to: {global_save_path}")
-#
-#         plt.pause(0.5)
-#         plt.close(fig2)
+def visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
+                                   candidates, chosen_point, iteration, env=None, save_path=None, prm_graph=None,
+                                   chosen_path=None):
+    """
+    Visualize the obstacle-distance grid with sampled candidates, chosen point, PRM Graph, and Chosen Path.
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+
+    fig, ax = plt.subplots(figsize=(14, 12))
+
+    x = pts[:, 0]
+    y = pts[:, 1]
+    PADDING_THRESHOLD = 0.15
+
+    # --- [MODIFICA] Disegna PRM graph sulla mappa LOCALE usando edge_validity ---
+    if prm_graph is not None and hasattr(prm_graph, 'nodes'):
+        for nid, (nx, ny) in prm_graph.nodes.items():
+            ax.plot(nx, ny, 'k.', markersize=3, alpha=0.5, zorder=1)
+
+        if hasattr(prm_graph, 'edge_validity'):
+            drawn_edges = set()
+            for (nid1, nid2), is_valid in prm_graph.edge_validity.items():
+                edge_tuple = tuple(sorted((nid1, nid2)))
+                if edge_tuple in drawn_edges: continue
+                drawn_edges.add(edge_tuple)
+
+                if nid1 in prm_graph.nodes and nid2 in prm_graph.nodes:
+                    nx1, ny1 = prm_graph.nodes[nid1]
+                    nx2, ny2 = prm_graph.nodes[nid2]
+                    # Verde trasparente se libero, Rosso trasparente se bloccato
+                    edge_color = 'green' if is_valid else 'red'
+                    edge_alpha = 0.15 if is_valid else 0.3
+                    ax.plot([nx1, nx2], [ny1, ny2], color=edge_color, linewidth=1.0, alpha=edge_alpha, zorder=1)
+
+    # --- Disegna il path scelto sulla mappa LOCALE ---
+    if chosen_path is not None and len(chosen_path) > 1:
+        path_x = [p[0] for p in chosen_path if p is not None]
+        path_y = [p[1] for p in chosen_path if p is not None]
+        ax.plot(path_x, path_y, color='magenta', linewidth=4.0, linestyle='-', zorder=6, label='Chosen PRM Path')
+        ax.plot(path_x, path_y, 'mo', markersize=8, markeredgecolor='white', zorder=7)
+
+    local_x_min, local_x_max = x.min(), x.max()
+    local_y_min, local_y_max = y.min(), y.max()
+
+    # ... [IL RESTO DEL CODICE PER IL PLOT LOCALE RIMANE INVARIATO (patch, waypoints, robot, ecc)] ...
+
+    ax.set_xlim(local_x_min - 0.5, local_x_max + 0.5)
+    ax.set_ylim(local_y_min - 0.5, local_y_max + 0.5)
+    ax.set_xlabel('X [m] (VISION)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Y [m] (VISION)', fontsize=12, fontweight='bold')
+    ax.set_title(f'Iteration {iteration}: Robot Path Visualization', fontsize=13, fontweight='bold')
+    ax.axis('equal')
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='upper right', fontsize=10)
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"[VISUALIZATION] Saved to: {save_path}")
+
+    plt.pause(0.5)
+    plt.close()
+
+    # ------------------------------------------------------------------ #
+    # SECOND FIGURE: global map
+    # ------------------------------------------------------------------ #
+    if env is not None:
+        ACCUM_RES = 0.05
+        if not hasattr(env, '_accumulated_pts'):
+            env._accumulated_pts = {}
+
+        if env._accumulated_pts:
+            accum_keys = np.array(list(env._accumulated_pts.keys()), dtype=np.float32)
+            accum_wx = accum_keys[:, 0] * ACCUM_RES
+            accum_wy = accum_keys[:, 1] * ACCUM_RES
+            accum_colors = np.array(list(env._accumulated_pts.values()), dtype=np.float32) / 255.0
+        else:
+            accum_wx = np.array([robot_x], dtype=np.float32)
+            accum_wy = np.array([robot_y], dtype=np.float32)
+            accum_colors = np.array([[0.0, 0.0, 1.0]], dtype=np.float32)
+
+        fig2, ax2 = plt.subplots(figsize=(18, 14))
+        ax2.scatter(accum_wx, accum_wy, c=accum_colors, s=2, alpha=0.4,
+                    label='Accumulated Local Grid')
+
+        # --- [MODIFICA] SOVRAPPOSIZIONE GRIGLIA LOCALE CORRENTE ---
+        # Plottiamo i punti "pts" attuali convertendo i colori per matplotlib
+        current_local_colors = color.astype(np.float32) / 255.0
+        ax2.scatter(pts[:, 0], pts[:, 1], c=current_local_colors, s=8, alpha=0.9, zorder=4,
+                    label='Current Local Grid Overlay')
+
+        # --- [MODIFICA] Disegna PRM graph sulla mappa GLOBALE usando edge_validity ---
+        if prm_graph is not None and hasattr(prm_graph, 'nodes'):
+            for nid, (nx, ny) in prm_graph.nodes.items():
+                ax2.plot(nx, ny, 'k.', markersize=5, alpha=0.6, zorder=3)
+
+            if hasattr(prm_graph, 'edge_validity'):
+                drawn_edges_global = set()
+                for (nid1, nid2), is_valid in prm_graph.edge_validity.items():
+                    edge_tuple = tuple(sorted((nid1, nid2)))
+                    if edge_tuple in drawn_edges_global: continue
+                    drawn_edges_global.add(edge_tuple)
+
+                    if nid1 in prm_graph.nodes and nid2 in prm_graph.nodes:
+                        nx1, ny1 = prm_graph.nodes[nid1]
+                        nx2, ny2 = prm_graph.nodes[nid2]
+                        # Colori e trasparenza per la mappa globale
+                        edge_color = 'green' if is_valid else 'red'
+                        edge_alpha = 0.15 if is_valid else 0.4
+                        edge_linewidth = 1.0 if is_valid else 2.0  # Più spesso se bloccato per visibilità
+                        ax2.plot([nx1, nx2], [ny1, ny2], color=edge_color, linewidth=edge_linewidth, alpha=edge_alpha,
+                                 zorder=2)
+
+        # --- Disegna il path scelto sulla mappa GLOBALE ---
+        if chosen_path is not None and len(chosen_path) > 1:
+            path_x = [p[0] for p in chosen_path if p is not None]
+            path_y = [p[1] for p in chosen_path if p is not None]
+            ax2.plot(path_x, path_y, color='magenta', linewidth=4.0, linestyle='-', zorder=6, label='Chosen PRM Path')
+            ax2.plot(path_x, path_y, 'mo', markersize=8, markeredgecolor='white', zorder=7)
+
+        # ... [IL RESTO DEL CODICE GLOBALE RIMANE INVARIATO (celle, candidati, rect_local, ecc)] ...
+
+        if 'rejected' in candidates:
+            for point in candidates['rejected']: ax2.plot(point[0], point[1], 'rx', markersize=10, markeredgewidth=2.5,
+                                                          zorder=5)
+
+        if 'valid' in candidates:
+            for point in candidates['valid']: ax2.plot(point[0], point[1], 'yo', markersize=10,
+                                                       markerfacecolor='yellow', markeredgewidth=2,
+                                                       markeredgecolor='orange', zorder=5)
+
+        if chosen_point is not None:
+            ax2.plot(chosen_point[0], chosen_point[1], 'g*', markersize=25, markeredgewidth=2, label='Target', zorder=6)
+            ax2.plot([robot_x, chosen_point[0]], [robot_y, chosen_point[1]], 'g--', linewidth=2.5, alpha=0.8, zorder=4)
+
+        rect_local = patches.Rectangle((local_x_min, local_y_min), local_x_max - local_x_min, local_y_max - local_y_min,
+                                       linewidth=2, edgecolor='cyan', facecolor='none', linestyle='-', alpha=0.8,
+                                       zorder=6, label='Current local scan')
+        ax2.add_patch(rect_local)
+
+        ax2.set_xlabel('X [m] (VISION)', fontsize=12, fontweight='bold')
+        ax2.set_ylabel('Y [m] (VISION)', fontsize=12, fontweight='bold')
+        ax2.set_title(f'Iteration {iteration}: Global Map View (accumulated local scans)', fontsize=13,
+                      fontweight='bold')
+        ax2.axis('equal')
+        ax2.grid(True, alpha=0.3)
+        ax2.legend(loc='upper right', fontsize=10)
+        plt.tight_layout()
+
+        if save_path:
+            base, ext = os.path.splitext(save_path)
+            global_save_path = f"{base}_global{ext}"
+            fig2.savefig(global_save_path, dpi=150, bbox_inches='tight')
+            print(f"[VISUALIZATION] Global map saved to: {global_save_path}")
+
+        plt.pause(0.5)
+        plt.close(fig2)
 
 
 def attempt_enter_cell_from_position(local_grid, robot_state_client, command_client,
@@ -361,12 +248,11 @@ def attempt_enter_cell_from_position(local_grid, robot_state_client, command_cli
 
     if target_x is None or target_y is None:
         print(f"[FAIL] No clear path found to cell ({target_row},{target_col}) from current position")
-        # visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
-        #                                {'rejected': rejected_samples, 'valid': []}, None, 0, env, prm_graph=prm_graph,
-        #                                chosen_path=None)
+        visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
+                                       {'rejected': rejected_samples, 'valid': []}, None, 0, env, prm_graph=prm_graph,
+                                       chosen_path=None)
         return False
 
-    # --- Calcolo del percorso sul PRM ---
     start_id = prm_graph.get_nearest_node(robot_x, robot_y)
     goal_id = prm_graph.get_nearest_node(target_x, target_y)
     path_ids = prm_graph.find_path_dijkstra(start_id, goal_id)
@@ -389,17 +275,15 @@ def attempt_enter_cell_from_position(local_grid, robot_state_client, command_cli
     save_path = os.path.join(mission_folder,
                              f"iteration_{iteration}_cell_{target_row}_{target_col}.png") if mission_folder else None
 
-    # visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
-    #                                {'rejected': rejected_samples, 'valid': valid_samples}, (target_x, target_y),
-    #                                iteration, env, save_path, prm_graph=prm_graph, chosen_path=full_path_coords)
+    visualize_grid_with_candidates(pts, cells_obstacle_dist, color, robot_x, robot_y,
+                                   {'rejected': rejected_samples, 'valid': valid_samples}, (target_x, target_y),
+                                   iteration, env, save_path, prm_graph=prm_graph, chosen_path=full_path_coords)
 
-    # --- Ciclo di navigazione waypoint per waypoint ---
     while path_waypoints and len(path_waypoints) > 0:
         robot_x, robot_y, _, _ = spotUtils.getPosition(robot_state_client)
         current_node_id = prm_graph.get_nearest_node(robot_x, robot_y)
         next_node_id, next_x, next_y = path_waypoints[0]
 
-        # 1. AGGIORNA IL TRACKER
         tracker_payload = [(current_node_id, robot_x, robot_y)] + path_waypoints
         verification_tracker.update_path(tracker_payload)
 
@@ -543,7 +427,7 @@ def easy_walk(options):
         start_row, start_col = 0, 0
         recordingInterface.create_default_waypoint(cell_row=start_row, cell_col=start_col)
 
-        env = environmentMap.EnvironmentMap(rows=4, cols=4, cell_size=5)
+        env = environmentMap.EnvironmentMap(rows=6, cols=6, cell_size=3)
 
         # --- [FIX CRUCIALE] Ricaviamo la posizione di boot PRIMA di configurare ed elaborare il grafo PRM ---
         x_boot, y_boot, z_boot, quat_boot = spotUtils.getPosition(robot_state_client)
@@ -551,10 +435,10 @@ def easy_walk(options):
                               1.0 - 2.0 * (quat_boot.y ** 2 + quat_boot.z ** 2))
         env.set_origin(x_boot, y_boot, yaw_boot, start_row=start_row, start_col=start_col)
 
-        gb_sampler = global_sampler.GlobalSampler(env, 10)
+        gb_sampler = global_sampler.GlobalSampler(env, 2)
         gb_sampler.sample_global_grid()
 
-        prm = prm_graph.PRM(max_edge_length=1.8, connection_radius=4, min_edge_length=0.5)
+        prm = prm_graph.PRM(max_edge_length=1.3, connection_radius=4, min_edge_length=0.7)
         prm.add_nodes_from_sampler(gb_sampler)
 
         # [NEW] Inseriamo il punto iniziale (Boot Node) dentro la lista dei nodi permanenti prima di generare gli archi
@@ -579,13 +463,13 @@ def easy_walk(options):
         base_graph_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "graph")
         graph_folder = os.path.join(base_graph_folder, mission_timestamp)
         mission_map_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MissionMap", mission_timestamp)
-        mission_log_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MissionLogs", mission_timestamp)
+        #mission_log_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MissionLogs", mission_timestamp)
         os.makedirs(graph_folder, exist_ok=True)
         os.makedirs(mission_map_folder, exist_ok=True)
-        os.makedirs(mission_log_folder, exist_ok=True)
+        #os.makedirs(mission_log_folder, exist_ok=True)
         mission_folder = mission_map_folder
-        mission_log_path = os.path.join(mission_log_folder, "mission_log.txt")
-        open(mission_log_path, "a", buffering=1)
+        #mission_log_path = os.path.join(mission_log_folder, "mission_log.txt")
+        #open(mission_log_path, "a", buffering=1)
 
         recordingInterface.set_download_filepath(graph_folder)
         path = env.generate_serpentine_path(start_cell=env.start_cell)
@@ -623,7 +507,7 @@ def easy_walk(options):
                     frontier.extend(find_new_borders(env, robot_row, robot_col, path, frontier))
                 else:
                     #TODO qui se non ho trovato il percorso e devo verificare se sono dentro la cella esatta o meno
-                    if selected_border == (robot_row, robot_col):
+                    if (selected_border[0], selected_border[1]) == (robot_row, robot_col):
                         env.update_position(x, y)
                         recordingInterface.create_default_waypoint(cell_row=selected_border[0],
                                                                    cell_col=selected_border[1])
