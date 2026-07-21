@@ -19,7 +19,6 @@ import spotGrid
 import spotLogInUtils
 import environmentMap
 import spotUtils
-#import velodyneClient
 import arcVerification
 
 import global_sampler
