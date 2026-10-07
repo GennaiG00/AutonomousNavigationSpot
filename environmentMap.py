@@ -15,126 +15,6 @@ class EnvironmentMap(object):
         self.waypoints = []
         self.robot_path = []
 
-
-    # def mark_explored_side(self, path=None, target_index=None, robot_row=None, robot_col=None,
-    #                        target_row=None, target_col=None):
-    #     """
-    #     Mark which side of target cell was explored based on robot's approach direction.
-    #
-    #     Recommended usage:
-    #     - Use path + target_index for the TARGET cell (from serpentine path)
-    #     - Use robot_row/robot_col for ROBOT position (actual position from sensors)
-    #     - Use target_row/target_col for TARGET cell (explicit coordinates)
-    #
-    #     Call patterns:
-    #     1. Path + target_index + robot position (recommended):
-    #        mark_explored_side(path=path, target_index=5, robot_row=1, robot_col=2)
-    #
-    #     2. Explicit coordinates only (backward compatible):
-    #        mark_explored_side(target_row=2, target_col=3, robot_row=1, robot_col=3)
-    #
-    #     Bit encoding:
-    #         North (↑) = 0b1000 (bit 3) = 8
-    #         East  (→) = 0b0100 (bit 2) = 4
-    #         South (↓) = 0b0010 (bit 1) = 2
-    #         West  (←) = 0b0001 (bit 0) = 1
-    #
-    #     The function automatically determines which side based on geometry:
-    #     - If robot is ABOVE target (lower row) → marks NORTH side
-    #     - If robot is BELOW target (higher row) → marks SOUTH side
-    #     - If robot is LEFT of target (lower col) → marks WEST side
-    #     - If robot is RIGHT of target (higher col) → marks EAST side
-    #
-    #     Args:
-    #         path: List of (row, col) tuples representing the serpentine path (optional)
-    #         target_index: Index in path of the target cell (optional)
-    #         robot_row: Row of the robot's current position (required)
-    #         robot_col: Column of the robot's current position (required)
-    #         target_row: Row of the target cell (optional, alternative to path/target_index)
-    #         target_col: Column of the target cell (optional, alternative to path/target_index)
-    #
-    #     Returns:
-    #         int: Updated sides value for the cell (4-bit binary)
-    #
-    #     Example:
-    #         # Using path + target_index + robot position (recommended)
-    #         mark_explored_side(path=path, target_index=5, robot_row=1, robot_col=2)
-    #
-    #         # Using explicit coordinates only
-    #         mark_explored_side(target_row=2, target_col=3, robot_row=2, robot_col=2)
-    #     """
-    #     # Extract target coordinates from path if provided
-    #     if path is not None and target_index is not None:
-    #         if 0 <= target_index < len(path):
-    #             target_row, target_col = path[target_index]
-    #             print(f"[PATH] Using target from path index {target_index}: ({target_row},{target_col})")
-    #         else:
-    #             print(f"[ERROR] Invalid target index: {target_index}, path_len={len(path)}")
-    #             return 0b0000
-    #
-    #     # Validate that we have all necessary coordinates
-    #     if target_row is None or target_col is None or robot_row is None or robot_col is None:
-    #         print(f"[ERROR] Missing coordinates: target=({target_row},{target_col}), robot=({robot_row},{robot_col})")
-    #         return 0b0000
-    #
-    #     print(f"[MARK] Target: ({target_row},{target_col}), Robot: ({robot_row},{robot_col})")
-    #
-    #     cell_key = (target_row, target_col)
-    #
-    #     # Initialize if not exists
-    #     if cell_key not in self.explored_sides:
-    #         self.explored_sides[cell_key] = 0b0000
-    #
-    #     # Calculate position difference
-    #     delta_row = target_row - robot_row  # Positive = robot is above, Negative = robot is below
-    #     delta_col = target_col - robot_col  # Positive = robot is left, Negative = robot is right
-    #
-    #     # Determine the primary direction (handle diagonal by choosing stronger component)
-    #     if abs(delta_row) > abs(delta_col):
-    #         # VERTICAL movement dominates
-    #         if delta_row <= 0:
-    #             # delta_row > 0 → target_row > robot_row → Robot is ABOVE (North of) target
-    #             # We're trying to enter from the NORTH side
-    #
-    #             side = 0b1000  # North (bit 3)
-    #             side_name = "North (↑)"
-    #         else:
-    #             # delta_row < 0 → target_row < robot_row → Robot is BELOW (South of) target
-    #             # We're trying to enter from the SOUTH side
-    #             side = 0b0010  # South (bit 1)
-    #             side_name = "South (↓)"
-    #     else:
-    #         # HORIZONTAL movement dominates or equal
-    #         if delta_col <= 0:
-    #             # delta_col > 0 → target_col > robot_col → Robot is LEFT (West of) target
-    #             # We're trying to enter from the WEST side
-    #             side = 0b0001  # West (bit 0)
-    #             side_name = "West (←)"
-    #         else:
-    #             # delta_col < 0 → target_col < robot_col → Robot is RIGHT (East of) target
-    #             # We're trying to enter from the EAST side
-    #             side = 0b0100  # East (bit 2)
-    #             side_name = "East (→)"
-    #
-    #     # Mark this side as explored using bitwise OR
-    #     self.explored_sides[cell_key] |= side
-    #
-    #     print(f"[SIDES] Cell ({target_row},{target_col}) - Marked {side_name} from ({robot_row},{robot_col}): {bin(side)} -> Total: {bin(self.explored_sides[cell_key])}")
-    #
-    #     return self.explored_sides[cell_key]
-    #
-    # def mark_cell_fully_explored(self, row, col):
-    #     """
-    #     Mark a cell as fully explored (all 4 sides: 0b1111).
-    #
-    #     Args:
-    #         row: Row of the cell
-    #         col: Column of the cell
-    #     """
-    #     cell_key = (row, col)
-    #     self.explored_sides[cell_key] = 0b1111
-    #     print(f"[SIDES] Cell ({row},{col}) marked as FULLY explored (0b1111)")
-
     def mark_cell_visited(self, row, col):
         """
         Mark a cell as visited (accessible).
@@ -252,6 +132,66 @@ class EnvironmentMap(object):
         if 0 <= row < self.rows and 0 <= col < self.cols:
             return self.map[row][col] == -1
         return False
+
+    def get_side_bit_facing_origin(self, origin_row, origin_col, target_row, target_col):
+        """
+        Robot moved/attempted from (origin_row,origin_col) toward (target_row,target_col).
+        Returns the bit on TARGET representing the side facing origin — the side that was
+        actually tested by this attempt.
+        """
+        dr, dc = target_row - origin_row, target_col - origin_col
+        if dr == -1 and dc == 0:
+            return 0b0010  # target is north of origin -> origin faces target's SOUTH side
+        if dr == 1 and dc == 0:
+            return 0b1000  # target is south of origin -> origin faces target's NORTH side
+        if dr == 0 and dc == 1:
+            return 0b0001  # target is east of origin -> origin faces target's WEST side
+        if dr == 0 and dc == -1:
+            return 0b0100  # target is west of origin -> origin faces target's EAST side
+        return 0b0000
+
+    def get_valid_neighbor_sides_mask(self, row, col):
+        """
+        Bitmask of sides that actually HAVE an in-bounds neighbor for this cell (edge/corner
+        cells have fewer than 4). This is "every side that could possibly ever be tried" --
+        used by all_sides_explored() to know when a cell has truly run out of options, as
+        opposed to just comparing against a fixed 0b1111 that assumes 4 neighbors always exist.
+        North=0b1000, East=0b0100, South=0b0010, West=0b0001
+        """
+        mask = 0b0000
+        if row - 1 >= 0:
+            mask |= 0b1000  # North neighbor exists
+        if row + 1 < self.rows:
+            mask |= 0b0010  # South neighbor exists
+        if col + 1 < self.cols:
+            mask |= 0b0100  # East neighbor exists
+        if col - 1 >= 0:
+            mask |= 0b0001  # West neighbor exists
+        return mask
+
+    def all_sides_explored(self, row, col):
+        """
+        True only if EVERY side that has an in-bounds neighbor has already been tried
+        (mark_cell_side_explored) for this cell. A cell should only be marked permanently
+        blocked (mark_cell_blocked, value=-1) once this is True -- otherwise it should stay
+        at value 0 (unvisited) so the normal frontier/rank system keeps offering it as a
+        legitimate candidate to be retried later, from whichever side hasn't been tried yet,
+        instead of being special-cased or excluded from exploration after a single failure.
+        """
+        return (self.get_cell_sides_status(row, col) & self.get_valid_neighbor_sides_mask(row, col)) == \
+               self.get_valid_neighbor_sides_mask(row, col)
+
+    def mark_cell_side_explored(self, row, col, side_bit):
+        """
+        Record that entry was attempted into this cell from the given side.
+        side_bit convention (matches get_blocked_neighbors_with_unexplored_side):
+            North=0b1000, East=0b0100, South=0b0010, West=0b0001
+        """
+        cell_key = (row, col)
+        current = self.explored_sides.get(cell_key, 0b0000)
+        self.explored_sides[cell_key] = current | side_bit
+        print(f"[SIDE] Cell ({row},{col}) side {bin(side_bit)} marked explored "
+              f"(now {bin(self.explored_sides[cell_key])})")
 
     def return_visited_cells_near_blocked(self, path=None, blocked_index=None, robot_row=None, robot_col=None,
                                           blocked_row=None, blocked_col=None):
@@ -496,6 +436,53 @@ class EnvironmentMap(object):
             print(f"[RESULT] No blocked neighbors with unexplored sides found for cell ({cell_row},{cell_col})\n")
             return None
 
+    def get_visited_neighbor_for_retry(self, blocked_row, blocked_col):
+        """
+        Given a cell that was JUST marked blocked, find a VISITED neighbor cell from
+        which the still-unexplored side of the blocked cell could be attempted.
+
+        This is the proactive counterpart to get_blocked_neighbors_with_unexplored_side():
+        that method starts from the ROBOT's current cell and looks outward for a
+        blocked neighbor to retry, so it only fires if the robot's current position
+        happens to be adjacent to a blocked cell AND the frontier is otherwise empty
+        at that exact moment. This method instead starts from the blocked cell itself,
+        the instant it's blocked, so the retry can be scheduled immediately instead of
+        waiting for the robot to wander back into the right spot later (which may
+        never happen for the rest of the mission).
+
+        Args:
+            blocked_row: Row of the cell that was just marked blocked
+            blocked_col: Column of the cell that was just marked blocked
+
+        Returns:
+            (row, col) tuple of the first visited neighbor with an unexplored facing
+            side, or None if the cell isn't blocked or no such neighbor exists.
+        """
+        if not self.is_cell_blocked(blocked_row, blocked_col):
+            return None
+
+        blocked_sides = self.get_cell_sides_status(blocked_row, blocked_col)
+
+        for dr, dc in [(-1, 0), (1, 0), (0, 1), (0, -1)]:  # North, South, East, West
+            neighbor_row, neighbor_col = blocked_row + dr, blocked_col + dc
+
+            if not (0 <= neighbor_row < self.rows and 0 <= neighbor_col < self.cols):
+                continue
+
+            if self.map[neighbor_row][neighbor_col] != 1:
+                continue  # only interested in already-visited neighbors
+
+            # Bit on the BLOCKED cell representing the side that faces this neighbor
+            side_bit = self.get_side_bit_facing_origin(neighbor_row, neighbor_col, blocked_row, blocked_col)
+
+            if not (blocked_sides & side_bit):
+                print(f"[PROACTIVE-RETRY] Blocked cell ({blocked_row},{blocked_col}) has visited "
+                      f"neighbor ({neighbor_row},{neighbor_col}) with unexplored facing side "
+                      f"{bin(side_bit)} (sides explored so far: {bin(blocked_sides)})")
+                return (neighbor_row, neighbor_col)
+
+        return None
+
     def get_unknow_neighbors_with_unexplored_side(self, cell_row, cell_col, path=None, path_index=None):
         """
         Find adjacent cells that are UNTESTED (value=0) and appear BEFORE the current cell in the serpentine path.
@@ -639,6 +626,18 @@ class EnvironmentMap(object):
 
             # Check if neighbor has NOT been explored (value == 0)
             if self.map[neighbor_row][neighbor_col] == 0:
+                # Even if the cell overall is still "unvisited" (0), we may have already
+                # tried entering it specifically from THIS direction and failed (a side got
+                # marked explored without the cell becoming fully blocked, since other sides
+                # remain untried). Don't immediately re-offer the exact same failed approach --
+                # let it come back around via a different direction, or via
+                # get_lowest_rank_unexplored_cell() once no direct neighbor works.
+                side_bit = self.get_side_bit_facing_origin(cell_row, cell_col, neighbor_row, neighbor_col)
+                if self.get_cell_sides_status(neighbor_row, neighbor_col) & side_bit:
+                    print(f"  ✗ Neighbor {direction}: ({neighbor_row},{neighbor_col}) already tried from "
+                          f"this side and failed -- skipping for now")
+                    continue
+
                 neighbor_cell = (neighbor_row, neighbor_col)
                 # Get rank from path
                 rank = cell_to_rank.get(neighbor_cell, float('inf'))

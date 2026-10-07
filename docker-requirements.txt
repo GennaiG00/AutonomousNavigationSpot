@@ -1,0 +1,16 @@
+bosdyn-api
+bosdyn-client
+bosdyn-core
+certifi
+charset-normalizer
+Deprecated>=1.2.10
+grpcio>=1.42.0
+idna>=2.10
+numpy>=1.19.5
+Pillow>=9.4.0
+protobuf>=3.19.4
+PyJWT>=2.0.1
+requests>=2.26.0
+six>=1.12.0
+urllib3>=1.26.2
+wrapt>=1.12.1
