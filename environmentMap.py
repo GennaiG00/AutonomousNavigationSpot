@@ -133,18 +133,6 @@ class EnvironmentMap(object):
             return self.map[row][col] == -1
         return False
 
-    def mark_cell_side_explored(self, row, col, side_bit):
-        """
-        Record that entry was attempted into this cell from the given side.
-        side_bit convention (matches get_blocked_neighbors_with_unexplored_side):
-            North=0b1000, East=0b0100, South=0b0010, West=0b0001
-        """
-        cell_key = (row, col)
-        current = self.explored_sides.get(cell_key, 0b0000)
-        self.explored_sides[cell_key] = current | side_bit
-        print(f"[SIDE] Cell ({row},{col}) side {bin(side_bit)} marked explored "
-              f"(now {bin(self.explored_sides[cell_key])})")
-
     def get_side_bit_facing_origin(self, origin_row, origin_col, target_row, target_col):
         """
         Robot moved/attempted from (origin_row,origin_col) toward (target_row,target_col).
@@ -161,6 +149,49 @@ class EnvironmentMap(object):
         if dr == 0 and dc == -1:
             return 0b0100  # target is west of origin -> origin faces target's EAST side
         return 0b0000
+
+    def get_valid_neighbor_sides_mask(self, row, col):
+        """
+        Bitmask of sides that actually HAVE an in-bounds neighbor for this cell (edge/corner
+        cells have fewer than 4). This is "every side that could possibly ever be tried" --
+        used by all_sides_explored() to know when a cell has truly run out of options, as
+        opposed to just comparing against a fixed 0b1111 that assumes 4 neighbors always exist.
+        North=0b1000, East=0b0100, South=0b0010, West=0b0001
+        """
+        mask = 0b0000
+        if row - 1 >= 0:
+            mask |= 0b1000  # North neighbor exists
+        if row + 1 < self.rows:
+            mask |= 0b0010  # South neighbor exists
+        if col + 1 < self.cols:
+            mask |= 0b0100  # East neighbor exists
+        if col - 1 >= 0:
+            mask |= 0b0001  # West neighbor exists
+        return mask
+
+    def all_sides_explored(self, row, col):
+        """
+        True only if EVERY side that has an in-bounds neighbor has already been tried
+        (mark_cell_side_explored) for this cell. A cell should only be marked permanently
+        blocked (mark_cell_blocked, value=-1) once this is True -- otherwise it should stay
+        at value 0 (unvisited) so the normal frontier/rank system keeps offering it as a
+        legitimate candidate to be retried later, from whichever side hasn't been tried yet,
+        instead of being special-cased or excluded from exploration after a single failure.
+        """
+        return (self.get_cell_sides_status(row, col) & self.get_valid_neighbor_sides_mask(row, col)) == \
+               self.get_valid_neighbor_sides_mask(row, col)
+
+    def mark_cell_side_explored(self, row, col, side_bit):
+        """
+        Record that entry was attempted into this cell from the given side.
+        side_bit convention (matches get_blocked_neighbors_with_unexplored_side):
+            North=0b1000, East=0b0100, South=0b0010, West=0b0001
+        """
+        cell_key = (row, col)
+        current = self.explored_sides.get(cell_key, 0b0000)
+        self.explored_sides[cell_key] = current | side_bit
+        print(f"[SIDE] Cell ({row},{col}) side {bin(side_bit)} marked explored "
+              f"(now {bin(self.explored_sides[cell_key])})")
 
     def return_visited_cells_near_blocked(self, path=None, blocked_index=None, robot_row=None, robot_col=None,
                                           blocked_row=None, blocked_col=None):
@@ -405,6 +436,53 @@ class EnvironmentMap(object):
             print(f"[RESULT] No blocked neighbors with unexplored sides found for cell ({cell_row},{cell_col})\n")
             return None
 
+    def get_visited_neighbor_for_retry(self, blocked_row, blocked_col):
+        """
+        Given a cell that was JUST marked blocked, find a VISITED neighbor cell from
+        which the still-unexplored side of the blocked cell could be attempted.
+
+        This is the proactive counterpart to get_blocked_neighbors_with_unexplored_side():
+        that method starts from the ROBOT's current cell and looks outward for a
+        blocked neighbor to retry, so it only fires if the robot's current position
+        happens to be adjacent to a blocked cell AND the frontier is otherwise empty
+        at that exact moment. This method instead starts from the blocked cell itself,
+        the instant it's blocked, so the retry can be scheduled immediately instead of
+        waiting for the robot to wander back into the right spot later (which may
+        never happen for the rest of the mission).
+
+        Args:
+            blocked_row: Row of the cell that was just marked blocked
+            blocked_col: Column of the cell that was just marked blocked
+
+        Returns:
+            (row, col) tuple of the first visited neighbor with an unexplored facing
+            side, or None if the cell isn't blocked or no such neighbor exists.
+        """
+        if not self.is_cell_blocked(blocked_row, blocked_col):
+            return None
+
+        blocked_sides = self.get_cell_sides_status(blocked_row, blocked_col)
+
+        for dr, dc in [(-1, 0), (1, 0), (0, 1), (0, -1)]:  # North, South, East, West
+            neighbor_row, neighbor_col = blocked_row + dr, blocked_col + dc
+
+            if not (0 <= neighbor_row < self.rows and 0 <= neighbor_col < self.cols):
+                continue
+
+            if self.map[neighbor_row][neighbor_col] != 1:
+                continue  # only interested in already-visited neighbors
+
+            # Bit on the BLOCKED cell representing the side that faces this neighbor
+            side_bit = self.get_side_bit_facing_origin(neighbor_row, neighbor_col, blocked_row, blocked_col)
+
+            if not (blocked_sides & side_bit):
+                print(f"[PROACTIVE-RETRY] Blocked cell ({blocked_row},{blocked_col}) has visited "
+                      f"neighbor ({neighbor_row},{neighbor_col}) with unexplored facing side "
+                      f"{bin(side_bit)} (sides explored so far: {bin(blocked_sides)})")
+                return (neighbor_row, neighbor_col)
+
+        return None
+
     def get_unknow_neighbors_with_unexplored_side(self, cell_row, cell_col, path=None, path_index=None):
         """
         Find adjacent cells that are UNTESTED (value=0) and appear BEFORE the current cell in the serpentine path.
@@ -548,6 +626,18 @@ class EnvironmentMap(object):
 
             # Check if neighbor has NOT been explored (value == 0)
             if self.map[neighbor_row][neighbor_col] == 0:
+                # Even if the cell overall is still "unvisited" (0), we may have already
+                # tried entering it specifically from THIS direction and failed (a side got
+                # marked explored without the cell becoming fully blocked, since other sides
+                # remain untried). Don't immediately re-offer the exact same failed approach --
+                # let it come back around via a different direction, or via
+                # get_lowest_rank_unexplored_cell() once no direct neighbor works.
+                side_bit = self.get_side_bit_facing_origin(cell_row, cell_col, neighbor_row, neighbor_col)
+                if self.get_cell_sides_status(neighbor_row, neighbor_col) & side_bit:
+                    print(f"  ✗ Neighbor {direction}: ({neighbor_row},{neighbor_col}) already tried from "
+                          f"this side and failed -- skipping for now")
+                    continue
+
                 neighbor_cell = (neighbor_row, neighbor_col)
                 # Get rank from path
                 rank = cell_to_rank.get(neighbor_cell, float('inf'))
