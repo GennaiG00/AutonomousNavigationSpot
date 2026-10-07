@@ -2580,6 +2580,14 @@ def attempt_enter_cell_from_position(local_grid, global_grid, robot_state_client
         touched_nodes = prm_graph.refresh_local_edge_weights(
             global_map=global_map, edge_safety_margin=spotGrid.PRM_EDGE_SAFETY_MARGIN_M)
 
+        # Fotografia della scansione appena fatta: serve gia' qui per scartare i nodi negli
+        # ostacoli, e poi al fronte sicuro. Va creata UNA volta sola per scansione:
+        # make_grid_snapshot aggiorna anche il filtro temporale degli ostacoli.
+        snap = arcVerification.make_grid_snapshot(
+            cells_obs_up, rough_up, is_valid_up, valid_up, terrain_real_up,
+            num_x_up, num_y_up, grid_origin_x_up, grid_origin_y_up, cell_size_up,
+            robot_x, robot_y, unwritten=unwritten_up)
+
         # Nodi DENTRO gli ostacoli: fuori dal grafo (2026-10-07). Vedi
         # prune_prm_nodes_in_obstacles -- gli archi erano gia' vetati, i nodi mai.
         pruned_nodes = prune_prm_nodes_in_obstacles(prm_graph, snap)
@@ -2631,10 +2639,6 @@ def attempt_enter_cell_from_position(local_grid, global_grid, robot_state_client
         t_prm = time.perf_counter()
 
         # 3. FRONTE SICURO sulla scansione appena fatta ---------------------------------
-        snap = arcVerification.make_grid_snapshot(
-            cells_obs_up, rough_up, is_valid_up, valid_up, terrain_real_up,
-            num_x_up, num_y_up, grid_origin_x_up, grid_origin_y_up, cell_size_up,
-            robot_x, robot_y, unwritten=unwritten_up)
         # La scorciatoia rispetta gli archi gia' scartati (2026-10-07): vedi shortcut_index.
         k_short = shortcut_index((robot_x, robot_y), path_waypoints, snap, global_map,
                                  prm=prm_graph, robot_node_id=robot_node_id)
